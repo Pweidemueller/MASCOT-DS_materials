@@ -33,14 +33,12 @@ from __future__ import annotations
 import argparse
 import re
 from pathlib import Path
-from typing import Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
 
-from analyse_posteriors import get_outbreak_start_deme, load_trajectory_file
 from constants import MODEL_MASCOT, MODEL_MASCOT_DS
 from plot_utils import COLORS, FONTSIZES_LIST, configure_pdf_fonts, save_figure_png_and_pdf
 from plot_utils import set_axis_fontsizes
@@ -105,67 +103,36 @@ def migration_direction_label(parameter: str, outbreak_start_deme: int) -> str:
     return MIGRATION_DIRECTION_LABELS[1]
 
 
-def t_first_infected_in_deme(traj_df: pd.DataFrame, deme: int) -> float:
-    """Earliest time ``t`` where ``population == 'I'`` has 1 or more individuals in the given deme."""
-    col = "Deme" if "Deme" in traj_df.columns else "index"
-    sub = traj_df[(traj_df["population"] == "I") & (traj_df[col] == deme)]
-    sub = sub[sub["value"] >= 1].sort_values("t")
-    if sub.empty:
-        raise ValueError(
-            f"No infected (I) trajectory rows for deme {deme}."
-        )
-    return float(sub["t"].min())
-
-
-def build_trajectory_metadata_by_simulation(
-    trajectory_dir: Path,
-    simulation_ids: Iterable[str],
+def load_trajectory_meta_from_csv(
+    sim_metadata_csv: Path,
 ) -> dict[str, tuple[int, float, float]]:
-    """
-    Per ``Simulation`` id, load ``{stem}.traj`` and return
-    ``(start_deme, t_first_I_start, t_first_I_secondary)`` for a two-deme model.
+    """Load per-simulation trajectory metadata from the consolidated CSV.
 
-    ``start_deme`` is from ``get_outbreak_start_deme``; the secondary deme is
-    ``1 - start_deme``. First-I times are the minimum ``t`` with ``population ==
-    'I'`` in each deme.
+    The CSV has columns: ``simulation``, ``deme``, ``deme_type``, ``t_of_first_infect``,
+    where ``simulation`` is the trajectory basename (e.g. ``1_2_simulation``).
+
+    Returns:
+        dict mapping trajectory stem -> ``(start_deme, t_first_I_start, t_first_I_secondary)``.
     """
-    trajectory_dir = Path(trajectory_dir)
+    df = pd.read_csv(sim_metadata_csv)
+    required = {"simulation", "deme", "deme_type", "t_of_first_infect"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Sim metadata CSV missing columns: {missing}")
     out: dict[str, tuple[int, float, float]] = {}
-    stem_meta: dict[str, tuple[int, float, float]] = {}
-    for sim in sorted(set(simulation_ids)):
-        stem = trajectory_stem_from_simulation_id(sim)
-        if stem not in stem_meta:
-            traj_path = trajectory_dir / f"{stem}.traj"
-            if not traj_path.is_file():
-                raise FileNotFoundError(
-                    f"Trajectory file not found for stem {stem!r} (from Simulation "
-                    f"{sim!r}): {traj_path}"
-                )
-            traj_df = load_trajectory_file(str(traj_path))
-            if traj_df.empty:
-                raise ValueError(
-                    f"Trajectory file loaded empty or invalid: {traj_path}"
-                )
-            start_deme = get_outbreak_start_deme(traj_df)
-            if start_deme not in (0, 1):
-                raise ValueError(
-                    f"Expected start deme 0 or 1 for two-demes model, got {start_deme}."
-                )
-            secondary_deme = 1 - start_deme
-            t_first_start = t_first_infected_in_deme(traj_df, start_deme)
-            t_first_secondary = t_first_infected_in_deme(traj_df, secondary_deme)
-            stem_meta[stem] = (start_deme, t_first_start, t_first_secondary)
-        out[sim] = stem_meta[stem]
+    for stem, grp in df.groupby("simulation"):
+        start_row = grp.loc[grp["deme_type"] == "start"]
+        sec_row = grp.loc[grp["deme_type"] == "secondary"]
+        if start_row.empty or sec_row.empty:
+            raise ValueError(
+                f"Simulation {stem!r}: expected one 'start' and one 'secondary' row."
+            )
+        out[str(stem)] = (
+            int(start_row["deme"].iloc[0]),
+            float(start_row["t_of_first_infect"].iloc[0]),
+            float(sec_row["t_of_first_infect"].iloc[0]),
+        )
     return out
-
-
-def build_starting_deme_by_simulation(
-    trajectory_dir: Path,
-    simulation_ids: Iterable[str],
-) -> dict[str, int]:
-    """Outbreak start deme per simulation (from trajectory metadata)."""
-    meta = build_trajectory_metadata_by_simulation(trajectory_dir, simulation_ids)
-    return {s: m[0] for s, m in meta.items()}
 
 
 def add_migration_direction_column(
@@ -745,13 +712,13 @@ def main() -> None:
         "relative_hpd_width (default: output_dir/migration_rates_hpd_validation_with_direction.csv).",
     )
     parser.add_argument(
-        "--trajectory_dir",
+        "--sim_metadata_csv",
         type=Path,
         default=None,
-        help="Directory with remaster trajectories named {stem}.traj, where stem is "
-        "derived from the Simulation column (e.g. 22_2_simulation_datastreams_noclip "
-        "-> 22_2_simulation.traj). Required for migration and prevalence figures "
-        "(get_outbreak_start_deme).",
+        help="Concatenated per-simulation metadata CSV with columns simulation, deme, "
+        "deme_type, t_of_first_infect (produced by simulate_datastreams.py and "
+        "concatenated in the pipeline). Required for migration, prevalence, and Ne "
+        "time-series figures.",
     )
     parser.add_argument(
         "--prevalence_csv",
@@ -769,7 +736,7 @@ def main() -> None:
             "Optional combined Ne HPD validation CSV with Model column (e.g. from "
             "combine_hpd_validation_ne_by_model.py). Writes ne_coverage_over_time, "
             "ne_bias_logne_over_time, and ne_hpd_width_logne_over_time in output_dir. "
-            "Requires --trajectory_dir when this file exists."
+            "Requires --sim_metadata_csv when this file exists."
         ),
     )
     args = parser.parse_args()
@@ -857,16 +824,18 @@ def main() -> None:
         args.combined_ne_csv is not None
         and Path(args.combined_ne_csv).is_file()
     )
-    need_traj = (df_mig is not None) or (df_prev is not None) or ne_csv_ok
+    need_meta = (df_mig is not None) or (df_prev is not None) or ne_csv_ok
     trajectory_meta: dict[str, tuple[int, float, float]] | None = None
     starting_deme_by_sim: dict[str, int] | None = None
-    if need_traj:
-        if args.trajectory_dir is None:
+    if need_meta:
+        if args.sim_metadata_csv is None or not Path(args.sim_metadata_csv).is_file():
             raise ValueError(
                 "Migration, prevalence, and/or combined Ne time-series figures require "
-                "--trajectory_dir: directory containing {stem}.traj files for outbreak "
-                "start deme and first-infected times."
+                "--sim_metadata_csv: path to the concatenated simulation metadata CSV "
+                "(produced by simulate_datastreams.py and concatenated in the pipeline)."
             )
+        # Load stem-keyed metadata, then remap to HPD CSV Simulation IDs via stem mapping.
+        stem_meta = load_trajectory_meta_from_csv(args.sim_metadata_csv)
         sims: set[str] = set()
         if df_mig is not None:
             sims |= set(df_mig["Simulation"].astype(str).unique())
@@ -880,9 +849,9 @@ def main() -> None:
                 .astype(str)
                 .unique()
             )
-        trajectory_meta = build_trajectory_metadata_by_simulation(
-            args.trajectory_dir, sims
-        )
+        trajectory_meta = {
+            sim: stem_meta[trajectory_stem_from_simulation_id(sim)] for sim in sims
+        }
         starting_deme_by_sim = {s: m[0] for s, m in trajectory_meta.items()}
 
     if df_mig is not None and starting_deme_by_sim is not None:

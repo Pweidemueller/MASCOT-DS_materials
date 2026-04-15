@@ -21,6 +21,7 @@ from plot_utils import (
     COLORS,
     DEFAULT_FONTSIZES,
     beautify_plot,
+    get_outbreak_start_deme,
     save_figure_png_and_pdf,
     set_axis_fontsizes,
 )
@@ -3287,53 +3288,6 @@ def get_deme_popsize(df: pd.DataFrame) -> dict:
 
     return result
 
-
-def get_outbreak_start_deme(df: pd.DataFrame) -> int:
-    """
-    Determine the deme in which the outbreak starts from a trajectory DataFrame.
-
-    The starting deme is defined as the row where:
-    - t == 0.0
-    - population == "I"
-    - value == 1.0
-
-    The deme is taken from the ``index`` column (or ``Deme`` if present).
-
-    Args:
-        df: Trajectory DataFrame as returned by ``load_trajectory_file``.
-
-    Returns:
-        int: The deme index where the outbreak starts.
-    """
-    if df is None or df.empty:
-        raise ValueError(
-            "Trajectory data is empty or None; cannot determine outbreak start deme."
-        )
-
-    # Filter rows matching the outbreak start definition
-    mask = (df["t"] == 0.0) & (df["population"] == "I") & (df["value"] == 1.0)
-    candidates = df.loc[mask]
-
-    if candidates.empty:
-        raise ValueError(
-            "No trajectory rows found with t == 0.0, population == 'I', and value == 1.0."
-        )
-
-    # Extract deme/index; prefer explicit Deme column if available
-    deme_column = "Deme" if "Deme" in candidates.columns else "index"
-    if deme_column not in candidates.columns:
-        raise ValueError("Trajectory data does not contain 'index' or 'Deme' column.")
-
-    unique_demes = candidates[deme_column].dropna().unique()
-
-    if len(unique_demes) != 1:
-        raise ValueError(
-            f"Expected exactly one starting deme, found {len(unique_demes)}: {unique_demes}."
-        )
-
-    starting_deme = int(unique_demes[0])
-    logger.info("Detected outbreak start deme: %s", starting_deme)
-    return starting_deme
 
 
 def get_deme_display_label(deme: int, starting_deme: int) -> str:

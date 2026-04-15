@@ -40,13 +40,16 @@ Let N = population size.
   case_counts = Y
   (Variance = μ + α·μ²; α = nb_dispersion)
 """
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
 import argparse
 import json
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from plot_utils import get_outbreak_start_deme, t_first_infected_in_deme
 
 # =============================================================
 # Constants
@@ -720,6 +723,26 @@ def run_pipeline(
     trajectories_prevalence_I = trajectories_prevalence.loc[
         trajectories_prevalence.population == "I"
     ]
+
+    # --- Simulation metadata CSV (start deme + first-I times per deme) ---
+    sim_name = Path(out_prefix).name
+    start_deme = get_outbreak_start_deme(trajectories_prevalence)
+    secondary_deme = 1 - start_deme
+    sim_meta_rows = [
+        {
+            "simulation": sim_name,
+            "deme": start_deme,
+            "deme_type": "start",
+            "t_of_first_infect": t_first_infected_in_deme(trajectories_prevalence_I, start_deme),
+        },
+        {
+            "simulation": sim_name,
+            "deme": secondary_deme,
+            "deme_type": "secondary",
+            "t_of_first_infect": t_first_infected_in_deme(trajectories_prevalence_I, secondary_deme),
+        },
+    ]
+    pd.DataFrame(sim_meta_rows).to_csv(f"{out_prefix}_sim_metadata.csv", index=False)
 
     first_detection: Dict[Tuple[int, int], float] = {}
     if constrain_to_first_detection:

@@ -140,10 +140,32 @@ process SIMULATE_DATASTREAMS {
     output:
     tuple val(simNb), val(ndemes), path(params_csv), path(trees), path(traj), path(nexus), path("${traj.baseName}_casecounts.csv"), path("${traj.baseName}_seroprevalence.csv"), path("${traj.baseName}_wastewater.csv"), emit: datastreams
     path "${traj.baseName}_trajectories.png", emit: output
+    path "${traj.baseName}_sim_metadata.csv", emit: sim_metadata
 
     shell:
     """
     simulate_datastreams.py --traj_file ${traj} --params_csv ${params_csv} --out_prefix ${traj.baseName}
+    """
+}
+
+process CONCATENATE_SIM_METADATA {
+    tag "sim metadata"
+    publishDir "${params.outdir}/3_analysis", mode: 'copy'
+
+    input:
+    path csvs
+
+    output:
+    path "all_sim_metadata.csv", emit: sim_metadata_csv
+
+    script:
+    def csvList = csvs instanceof List ? csvs : [csvs]
+    def firstFile = csvList[0]
+    def otherFiles = csvList.size() > 1 ? csvList[1..-1] : []
+    """
+    head -n 1 "${firstFile}" > all_sim_metadata.csv
+    tail -n +2 "${firstFile}" >> all_sim_metadata.csv
+    ${otherFiles.collect { f -> "tail -n +2 \"${f}\" >> all_sim_metadata.csv" }.join('\n    ')}
     """
 }
 
@@ -527,7 +549,7 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
     publishDir "${params.outdir}/5_simulation_study", mode: 'copy'
 
     input:
-    tuple path(params_csv), path(migration_rates_csv), path(prevalence_csv), path(combined_ne_csv), path(trajectories)
+    tuple path(params_csv), path(migration_rates_csv), path(prevalence_csv), path(combined_ne_csv), path(sim_metadata_csv)
 
     output:
     path "*.png", emit: png_plots
@@ -541,7 +563,7 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
         --migration_rates_csv ${migration_rates_csv} \
         --prevalence_csv ${prevalence_csv} \
         --combined_ne_csv ${combined_ne_csv} \
-        --trajectory_dir . \
+        --sim_metadata_csv ${sim_metadata_csv} \
         --output_dir .
     """
 }
@@ -780,7 +802,7 @@ workflow {
 
     // ── [2] True vs estimated parameter figures ─────────────────────────
     // Needs: params CSV (datastreams), migration CSV (datastreams), prevalence CSV (datastreams),
-    //        combined Ne CSV (from COMBINE_HPD_NE_BY_MODEL), trajectory files
+    //        combined Ne CSV (from COMBINE_HPD_NE_BY_MODEL), concatenated sim metadata CSV
     fig_params_csv = concatenated_csvs.concatenated_csv
         .filter { it[0] == 'params' && it[1] == 'datastreams' }
         .map { it[2] }
@@ -793,17 +815,15 @@ workflow {
         .filter { it[0] == 'prevalence' && it[1] == 'datastreams' }
         .map { it[2] }
 
-    // Collect all trajectory files for outbreak start deme lookup
-    all_trajectories = ds_outputs.datastreams
-        .map { t -> t[4] }  // traj is index 4 in the datastreams tuple
-        .collect()
+    // Concatenate per-simulation metadata CSVs (start deme + first-I times)
+    all_sim_metadata = ds_outputs.sim_metadata.collect()
+    concatenated_sim_metadata = CONCATENATE_SIM_METADATA(all_sim_metadata)
 
     fig_truevsest_input = fig_params_csv
         .combine(fig_mig_csv)
         .combine(fig_prev_csv)
         .combine(combined_ne.combined_ne_csv)
-        .combine(all_trajectories)
-        .map { items -> tuple(items[0], items[1], items[2], items[3], items[4..-1]) }
+        .combine(concatenated_sim_metadata.sim_metadata_csv)
 
     MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 }
@@ -1002,17 +1022,15 @@ workflow ANALYSE_FROM_PUBLISHED {
         .filter { it[0] == 'prevalence' && it[1] == 'datastreams' }
         .map { it[2] }
 
-    // Collect trajectory files from published results
-    all_trajectories = Channel
-        .fromPath("${params.outdir}/1_remaster_sim/*.traj")
-        .collect()
+    // Read concatenated sim metadata from published results
+    published_sim_metadata = Channel
+        .fromPath("${params.outdir}/3_analysis/all_sim_metadata.csv")
 
     fig_truevsest_input = fig_params_csv
         .combine(fig_mig_csv)
         .combine(fig_prev_csv)
         .combine(combined_ne.combined_ne_csv)
-        .combine(all_trajectories)
-        .map { items -> tuple(items[0], items[1], items[2], items[3], items[4..-1]) }
+        .combine(published_sim_metadata)
 
     MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 

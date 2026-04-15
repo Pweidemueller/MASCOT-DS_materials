@@ -6,10 +6,77 @@ Shared utility functions for plotting scripts.
 import logging
 import matplotlib.pyplot as plt
 import matplotlib
+import pandas as pd
 
 from constants import COLORBLINDFR, COLORS, VARIANT_COLORS  # noqa: F401 — re-exported
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Trajectory utility functions (shared across simulate_datastreams, analyse_posteriors)
+# ---------------------------------------------------------------------------
+
+
+def get_outbreak_start_deme(df: pd.DataFrame) -> int:
+    """Determine the deme where the outbreak starts from a trajectory DataFrame.
+
+    The starting deme is the one where t == 0.0, population == "I", value == 1.0.
+
+    Args:
+        df: Trajectory DataFrame with columns including ``t``, ``population``,
+            ``value``, and either ``index`` or ``Deme``.
+
+    Returns:
+        int: Deme index where the outbreak starts.
+
+    Raises:
+        ValueError: If the trajectory is empty, has no matching rows, or returns
+            more than one candidate deme.
+    """
+    if df is None or df.empty:
+        raise ValueError(
+            "Trajectory data is empty or None; cannot determine outbreak start deme."
+        )
+    mask = (df["t"] == 0.0) & (df["population"] == "I") & (df["value"] == 1.0)
+    candidates = df.loc[mask]
+    if candidates.empty:
+        raise ValueError(
+            "No trajectory rows found with t == 0.0, population == 'I', and value == 1.0."
+        )
+    deme_col = "Deme" if "Deme" in candidates.columns else "index"
+    if deme_col not in candidates.columns:
+        raise ValueError("Trajectory data does not contain 'index' or 'Deme' column.")
+    unique_demes = candidates[deme_col].dropna().unique()
+    if len(unique_demes) != 1:
+        raise ValueError(
+            f"Expected exactly one starting deme, found {len(unique_demes)}: {unique_demes}."
+        )
+    start_deme = int(unique_demes[0])
+    logger.info("Detected outbreak start deme: %s", start_deme)
+    return start_deme
+
+
+def t_first_infected_in_deme(traj_df: pd.DataFrame, deme: int) -> float:
+    """Earliest time ``t`` where ``population == 'I'`` has >= 1 individual in the given deme.
+
+    Args:
+        traj_df: Trajectory DataFrame with columns ``population``, ``value``, ``t``,
+            and either ``index`` or ``Deme``.
+        deme: Deme index to query.
+
+    Returns:
+        float: Time (in years) of first infection in that deme.
+
+    Raises:
+        ValueError: If no infected rows exist for that deme.
+    """
+    col = "Deme" if "Deme" in traj_df.columns else "index"
+    sub = traj_df[(traj_df["population"] == "I") & (traj_df[col] == deme)]
+    sub = sub[sub["value"] >= 1].sort_values("t")
+    if sub.empty:
+        raise ValueError(f"No infected (I) trajectory rows for deme {deme}.")
+    return float(sub["t"].min())
 
 # Default font sizes
 DEFAULT_FONTSIZES = {
