@@ -573,7 +573,7 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
 // ---------------------------------------------------------------------------
 workflow {
     // Build tuples for sampling (index 1..50, seed 42+index)
-    tuples_to_sample = Channel.from(1..5).map { n ->
+    tuples_to_sample = Channel.from(1..50).map { n ->
         tuple(n, params.ndemes, params.population_sizes, 41 + n)
     }
 
