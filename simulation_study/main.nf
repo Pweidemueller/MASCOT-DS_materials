@@ -297,7 +297,7 @@ process ANALYSE_POSTERIORS {
 
     output:
     path "${meta.base}_${meta.variant}_*", emit: analysis_outputs
-    tuple val(meta.base), val(meta.variant), path("*_datastreams_hpd_validation_cumulative_incidence.csv"), path("*_datastreams_hpd_validation_ne.csv"), path("*_datastreams_hpd_validation_params.csv"), path("*_datastreams_hpd_validation_prevalence.csv"), path("*_hpd_validation_migration_rates.csv"), emit: hpd_validation_outputs
+    tuple val(meta.base), val(meta.variant), path("*_datastreams_hpd_validation_cumulative_incidence.csv"), path("*_datastreams_hpd_validation_ne.csv"), path("*_datastreams_hpd_validation_params.csv"), path("*_datastreams_hpd_validation_prevalence.csv"), path("*_hpd_validation_migration_rates.csv"), path("*_original_hpd_validation_ne.csv"), emit: hpd_validation_outputs
 
     shell:
     """
@@ -373,7 +373,7 @@ process PLOT_HPD_VALIDATION {
 
 process CALCULATE_ESS {
     tag "${run_name}"
-    publishDir "${params.outdir}/4_ess", mode: 'copy'
+    // publishDir "${params.outdir}/4_ess", mode: 'copy'
 
     input:
     tuple val(run_name), val(variant), path(log_file)
@@ -493,28 +493,30 @@ process COMBINE_HPD_NE_BY_MODEL {
 }
 
 // [2] Quantify information content by comparing HPD widths across leave-one-out variants
+// Uses a single flat path input to avoid combine() flattening separate collected lists.
+// Files are sorted into params/prevalence/migration_rates by filename prefix.
 process QUANTIFY_INFORMATION_CONTENT {
     tag "information content"
-    publishDir "${params.outdir}/3_analysis", mode: 'copy'
+    publishDir "${params.outdir}/6_informationcontent", mode: 'copy'
 
     input:
-    tuple path(params_csvs), path(prevalence_csvs), path(migration_rates_csvs)
+    path all_csvs
 
     output:
     path "information_content_*", emit: plots
 
     script:
-    // params_csvs: list of all_params_*_hpd_validation.csv files (datastreams + leave-one-out)
-    // prevalence_csvs: list of all_prevalence_*_hpd_validation.csv files
-    // migration_rates_csvs: list of all_migration_rates_*_hpd_validation.csv files
-    def paramArgs = params_csvs instanceof List ? params_csvs.collect { it.name }.join(' ') : params_csvs.name
-    def prevArgs = prevalence_csvs instanceof List ? prevalence_csvs.collect { it.name }.join(' ') : prevalence_csvs.name
-    def migArgs = migration_rates_csvs instanceof List ? migration_rates_csvs.collect { it.name }.join(' ') : migration_rates_csvs.name
+    def fileList = all_csvs instanceof List ? all_csvs : [all_csvs]
+    def paramArgs = fileList.findAll { it.name.startsWith('all_params_') }.collect { it.name }.join(' ')
+    def prevArgs  = fileList.findAll { it.name.startsWith('all_prevalence_') }.collect { it.name }.join(' ')
+    def migArgs   = fileList.findAll { it.name.startsWith('all_migration_rates_') }.collect { it.name }.join(' ')
+    def prevFlag  = prevArgs  ? "--prevalence-files ${prevArgs}" : ''
+    def migFlag   = migArgs   ? "--migration-rates-files ${migArgs}" : ''
     """
     quantify_informationcontent.py \
         ${paramArgs} \
-        --prevalence-files ${prevArgs} \
-        --migration-rates-files ${migArgs} \
+        ${prevFlag} \
+        ${migFlag} \
         --output information_content
     """
 }
@@ -522,7 +524,7 @@ process QUANTIFY_INFORMATION_CONTENT {
 // [2] True vs estimated scatter plots, migration bias/uncertainty, prevalence/Ne coverage over time
 process MAKE_FIGURE_TRUE_VS_ESTIMATE {
     tag "true vs estimate"
-    publishDir "${params.outdir}/3_analysis/figures", mode: 'copy'
+    publishDir "${params.outdir}/5_simulation_study", mode: 'copy'
 
     input:
     tuple path(params_csv), path(migration_rates_csv), path(prevalence_csv), path(combined_ne_csv), path(trajectories)
@@ -549,7 +551,7 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
 // ---------------------------------------------------------------------------
 workflow {
     // Build tuples for sampling (index 1..50, seed 42+index)
-    tuples_to_sample = Channel.from(1..50).map { n ->
+    tuples_to_sample = Channel.from(1..5).map { n ->
         tuple(n, params.ndemes, params.population_sizes, 41 + n)
     }
 
@@ -714,20 +716,22 @@ workflow {
                   params_csv, traj, cc, sp, ww, deme_csv)
         }
 
-    analysis_inputs.count().view { n -> "analysis_inputs number of elements: ${n}" }
-
     analysis_results = ANALYSE_POSTERIORS(analysis_inputs)
 
     // ── HPD validation ──────────────────────────────────────────────────
     grouped_by_type = analysis_results.hpd_validation_outputs
-        .flatMap { base, variant, f_ci, f_ne, f_params, f_prev, f_migration_rates ->
-            [
+        .flatMap { base, variant, f_ci, f_ne, f_params, f_prev, f_migration_rates, f_original_ne ->
+            def tuples = [
                 tuple("cumulative_incidence", variant, f_ci),
                 tuple("ne", variant, f_ne),
                 tuple("params", variant, f_params),
                 tuple("prevalence", variant, f_prev),
                 tuple("migration_rates", variant, f_migration_rates)
             ]
+            if (variant == 'datastreams') {
+                tuples << tuple("ne", "original", f_original_ne)
+            }
+            tuples
         }
         .groupTuple(by: [0, 1])
 
@@ -740,13 +744,13 @@ workflow {
     ch_params = concatenated_csvs.concatenated_csv.filter { it[0] == 'params' }              .map { it -> tuple(it[1], it[2]) }
     ch_mig    = concatenated_csvs.concatenated_csv.filter { it[0] == 'migration_rates' }     .map { it -> tuple(it[1], it[2]) }
 
-    plot_inputs = ch_prev
-        .combine(ch_ne, by: 0)
-        .combine(ch_ci, by: 0)
-        .combine(ch_params, by: 0)
-        .combine(ch_mig, by: 0)
+    // plot_inputs = ch_prev
+    //     .combine(ch_ne, by: 0)
+    //     .combine(ch_ci, by: 0)
+    //     .combine(ch_params, by: 0)
+    //     .combine(ch_mig, by: 0)
 
-    PLOT_HPD_VALIDATION(plot_inputs)
+    // PLOT_HPD_VALIDATION(plot_inputs)
 
     // ── [2] Per-simulation publication figures ──────────────────────────
     MAKE_INDIVIDUAL_SIM_FIGURES(analysis_inputs)
@@ -764,24 +768,15 @@ workflow {
     combined_ne = COMBINE_HPD_NE_BY_MODEL(combine_ne_input)
 
     // ── [2] Quantify information content across leave-one-out variants ──
-    // Collect params CSVs for datastreams + leave-one-out variants (not original)
-    info_params = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'params' && it[1].startsWith('datastreams') }
+    // Collect all relevant CSVs (params, prevalence, migration_rates) for
+    // datastream variants into a single flat list. The process sorts them
+    // by filename prefix, avoiding combine() list-flattening issues.
+    info_all_files = concatenated_csvs.concatenated_csv
+        .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
         .map { it[2] }
         .collect()
 
-    info_prevalence = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'prevalence' && it[1].startsWith('datastreams') }
-        .map { it[2] }
-        .collect()
-
-    info_migration = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'migration_rates' && it[1].startsWith('datastreams') }
-        .map { it[2] }
-        .collect()
-
-    info_input = info_params.combine(info_prevalence).combine(info_migration)
-    QUANTIFY_INFORMATION_CONTENT(info_input)
+    QUANTIFY_INFORMATION_CONTENT(info_all_files)
 
     // ── [2] True vs estimated parameter figures ─────────────────────────
     // Needs: params CSV (datastreams), migration CSV (datastreams), prevalence CSV (datastreams),
@@ -808,6 +803,7 @@ workflow {
         .combine(fig_prev_csv)
         .combine(combined_ne.combined_ne_csv)
         .combine(all_trajectories)
+        .map { items -> tuple(items[0], items[1], items[2], items[3], items[4..-1]) }
 
     MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 }
@@ -939,14 +935,18 @@ workflow ANALYSE_FROM_PUBLISHED {
     analysis_results = ANALYSE_POSTERIORS(analysis_inputs)
 
     grouped_by_type = analysis_results.hpd_validation_outputs
-        .flatMap { base, variant, f_ci, f_ne, f_params, f_prev, f_migration_rates ->
-            [
+        .flatMap { base, variant, f_ci, f_ne, f_params, f_prev, f_migration_rates, f_original_ne ->
+            def tuples = [
                 tuple("cumulative_incidence", variant, f_ci),
                 tuple("ne", variant, f_ne),
                 tuple("params", variant, f_params),
                 tuple("prevalence", variant, f_prev),
                 tuple("migration_rates", variant, f_migration_rates)
             ]
+            if (variant == 'datastreams') {
+                tuples << tuple("ne", "original", f_original_ne)
+            }
+            tuples
         }
         .groupTuple(by: [0, 1])
 
@@ -982,23 +982,12 @@ workflow ANALYSE_FROM_PUBLISHED {
     combined_ne = COMBINE_HPD_NE_BY_MODEL(combine_ne_input)
 
     // ── [2] Quantify information content across leave-one-out variants ──
-    info_params = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'params' && it[1].startsWith('datastreams') }
+    info_all_files = concatenated_csvs.concatenated_csv
+        .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
         .map { it[2] }
         .collect()
 
-    info_prevalence = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'prevalence' && it[1].startsWith('datastreams') }
-        .map { it[2] }
-        .collect()
-
-    info_migration = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'migration_rates' && it[1].startsWith('datastreams') }
-        .map { it[2] }
-        .collect()
-
-    info_input = info_params.combine(info_prevalence).combine(info_migration)
-    QUANTIFY_INFORMATION_CONTENT(info_input)
+    QUANTIFY_INFORMATION_CONTENT(info_all_files)
 
     // ── [2] True vs estimated parameter figures ─────────────────────────
     fig_params_csv = concatenated_csvs.concatenated_csv
@@ -1023,6 +1012,7 @@ workflow ANALYSE_FROM_PUBLISHED {
         .combine(fig_prev_csv)
         .combine(combined_ne.combined_ne_csv)
         .combine(all_trajectories)
+        .map { items -> tuple(items[0], items[1], items[2], items[3], items[4..-1]) }
 
     MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 

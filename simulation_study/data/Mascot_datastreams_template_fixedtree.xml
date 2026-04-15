@@ -228,7 +228,7 @@
       <downRealParameter idref="wastewater.scaling.Deme2:SimDataset"/>
     </operator>
     <operator id="CaseCountsDispersionScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@caseCounts.dispersion:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.5"/>
-    <operator id="WasterwaterSigmaScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@wastewater.sigma:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.5"/>
+    <operator id="WastewaterSigmaScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@wastewater.sigma:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.5"/>
     <operator id="migrationRatesScaler.s:SimDataset" spec="AdaptableOperatorSampler" weight="1.0">
       <parameter idref="migrationRatesSkyline.t:SimDataset"/>
       <operator idref="AVMNOperator.Mascot.SimDataset"/>

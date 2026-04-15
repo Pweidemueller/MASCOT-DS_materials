@@ -66,7 +66,9 @@ def identify_variant(filename, all_keyword="all_params_datastreams"):
         return "nowastewater"
     elif "noseroprevalence" in filename_lower:
         return "noseroprevalence"
-    elif all_keyword in filename_lower and "no" not in filename_lower:
+    elif "nomascotll" in filename_lower:
+        return "nomascotll"
+    elif all_keyword in filename_lower and "no" not in filename_lower and "onlytree" not in filename_lower:
         return "all"
     return None
 
@@ -127,7 +129,7 @@ def find_all_prevalence_file(prevalence_files):
 
     for filepath in prevalence_files:
         filename = Path(filepath).name.lower()
-        if "all_prevalence_datastreams" in filename and "no" not in filename:
+        if "all_prevalence_datastreams" in filename and "no" not in filename and "onlytree" not in filename:
             return filepath
     return None
 

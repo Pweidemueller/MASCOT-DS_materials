@@ -1,1 +1,6 @@
 .DS_Store
+*.nextflow
+*.nextflow.log*
+*__pycache__*
+*/results*
+/simulation_study/empty_files

@@ -208,7 +208,10 @@ def remove_excluded_datastream_elements(
                 "WastewaterScaling.",
                 "WastewaterSigmaPrior.",
             ],
-            "standalone_operator_prefixes": ["WastewaterSigmaScalerX."],
+            # Template uses typo "WasterwaterSigmaScalerX" (see Mascot_datastreams_template_fixedtree.xml)
+            "standalone_operator_prefixes": [
+                "WastewaterSigmaScalerX.",
+            ],
             "log_prefixes": ["wastewaterLikelihood."],
             "logger_prefixes": [],
         },
@@ -385,9 +388,10 @@ def _replace_xml_element(root, tag, element_id, new_xml_str):
     print(f"Warning: element <{tag} id='{element_id}'> not found in template")
 
 
-def _inject_traits(root, trait_block, type_trait_block):
+def _inject_traits(root, trait_block, type_trait_block, infer_tree=False):
     """Replace the dateTrait and typeTraitSet blocks in the template."""
-    _replace_xml_element(root, "trait", "dateTrait.t:SimDataset", trait_block)
+    if infer_tree:
+        _replace_xml_element(root, "trait", "dateTrait.t:SimDataset", trait_block)
     _replace_xml_element(root, "typeTrait", "typeTraitSet.t:SimDataset", type_trait_block)
 
 
@@ -493,8 +497,7 @@ def _build_output_suffix(output_suffix_override, clip_trans_rate,
     """Determine the output filename suffix."""
     if is_datastream_template:
         if output_suffix_override is not None:
-            clip_suffix = "_noclip" if not clip_trans_rate else "_clip"
-            return "_" + output_suffix_override + clip_suffix
+            return "_" + output_suffix_override
         suffix_parts = ["_datastreams"]
         if exclude_case_counts:
             suffix_parts.append("_nocasecounts")
@@ -502,12 +505,10 @@ def _build_output_suffix(output_suffix_override, clip_trans_rate,
             suffix_parts.append("_noseroprevalence")
         if exclude_wastewater:
             suffix_parts.append("_nowastewater")
-        clip_suffix = "_noclip" if not clip_trans_rate else "_clip"
-        return "".join(suffix_parts) + clip_suffix
+        return "".join(suffix_parts)
     else:
         if output_suffix_override != VARIANT_ORIGINAL:
-            clip_suffix = "_noclip" if not clip_trans_rate else "_clip"
-            return "_" + output_suffix_override + clip_suffix
+            return "_" + output_suffix_override
         return "_" + VARIANT_ORIGINAL
 
 
@@ -566,7 +567,7 @@ def replace_blocks_template(
             root.remove(data_elem)
 
     # Inject alignment, traits
-    _inject_traits(root, trait_block, type_trait_block)
+    _inject_traits(root, trait_block, type_trait_block, infer_tree=use_fixed_tree == False)
 
     # Inject datastream parameter values
     if is_datastream_template:
@@ -1079,8 +1080,8 @@ def main():
         "--clip-trans-rate",
         type=str,
         choices=("true", "false"),
-        default="true",
-        help="For datastream template only: set clipTransRate on Spline elements to true or false. Default: true. Ignored when writing original (standard) template.",
+        default="false",
+        help="For datastream template only: set clipTransRate on Spline elements to true or false. Default: false. Ignored when writing original (standard) template.",
     )
     args = parser.parse_args()
     clip_trans_rate = args.clip_trans_rate == "true"

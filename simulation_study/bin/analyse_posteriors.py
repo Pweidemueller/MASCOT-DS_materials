@@ -28,6 +28,18 @@ from plot_utils import (
 # Local font sizes (copy of DEFAULT_FONTSIZES so user can change in script)
 fontsizes = dict(DEFAULT_FONTSIZES)
 
+# Posterior columns for datastream auxiliary parameters (KDE / HPD tables).
+DATASTREAM_POSTERIOR_PARAMETERS = (
+    "caseCounts.dispersion:SimDataset",
+    "caseCounts.scaling.Deme1:SimDataset",
+    "caseCounts.scaling.Deme2:SimDataset",
+    "seroprevalence.scaling.Deme1:SimDataset",
+    "seroprevalence.scaling.Deme2:SimDataset",
+    "wastewater.scaling.Deme1:SimDataset",
+    "wastewater.scaling.Deme2:SimDataset",
+    "wastewater.sigma:SimDataset",
+)
+
 
 def _fontsizes_list():
     """List [title, axis_label, tick_label] for set_axis_fontsizes, from current fontsizes."""
@@ -999,25 +1011,73 @@ def get_datastream_true_values_from_params(params_df):
     return true_values
 
 
+def build_datastream_params_hpd_dataframe(df, params_df=None):
+    """
+    One row per listed parameter: HPD bounds, median, and inHPD vs params_df truth when present.
+
+    Rows are still emitted for missing or empty posterior columns (inHPD None / NaN as before).
+    """
+    true_values = get_datastream_true_values_from_params(params_df)
+    hpd_results = []
+    for parameter in DATASTREAM_POSTERIOR_PARAMETERS:
+        if parameter in df.columns:
+            param_values = df[parameter].dropna().values
+            if len(param_values) > 0:
+                hpd_lower, hpd_upper, median = calculate_hpd(param_values, alpha=0.05)
+                true_value = true_values.get(parameter)
+                in_hpd = (
+                    1
+                    if (true_value is not None and hpd_lower <= true_value <= hpd_upper)
+                    else (0 if true_value is not None else None)
+                )
+                hpd_results.append(
+                    {
+                        "Parameter": parameter,
+                        "inHPD": in_hpd,
+                        "true_value": true_value,
+                        "hpd_lower": hpd_lower,
+                        "hpd_upper": hpd_upper,
+                        "median": median,
+                    }
+                )
+            else:
+                hpd_results.append({"Parameter": parameter, "inHPD": None})
+        else:
+            hpd_results.append({"Parameter": parameter, "inHPD": None})
+    return pd.DataFrame(hpd_results)
+
+
+def save_datastream_params_hpd_validation_csv(df, params_df, out_prefix):
+    """
+    Write ``{out_prefix}_datastreams_hpd_validation_params.csv``.
+
+    ``out_prefix`` is the run/stem prefix (same as ``output_file`` with
+    ``_datastream_paramsestimates.png`` removed).
+    """
+    print("HHHHAAAALLLO)")
+    hpd_table = build_datastream_params_hpd_dataframe(df, params_df=params_df)
+    print(hpd_table.columns, hpd_table.empty)
+    hpd_table["Simulation"] = out_prefix
+    table_output = f"{out_prefix}_datastreams_hpd_validation_params.csv"
+    print(hpd_table.head())
+    hpd_table.to_csv(table_output, index=False)
+    logger.info("HPD validation table saved to %s", table_output)
+    print("BLAAAAAAHHHHHHAHAHAHAH")
+
+
 def plot_datastream_params(df, output_file=None, params_df=None):
     """
     Plot the parameters of the datastream MASCOT model.
-    True values for vertical lines and HPD validation are taken from params_df when provided.
+    True values for vertical lines are taken from params_df when provided.
+
+    For HPD validation CSV without figures, use
+    ``save_datastream_params_hpd_validation_csv``.
     """
     if df.empty:
         logger.warning("No data to plot.")
         return
 
-    parameters = [
-        "caseCounts.dispersion:SimDataset",
-        "caseCounts.scaling.Deme1:SimDataset",
-        "caseCounts.scaling.Deme2:SimDataset",
-        "seroprevalence.scaling.Deme1:SimDataset",
-        "seroprevalence.scaling.Deme2:SimDataset",
-        "wastewater.scaling.Deme1:SimDataset",
-        "wastewater.scaling.Deme2:SimDataset",
-        "wastewater.sigma:SimDataset",
-    ]
+    parameters = DATASTREAM_POSTERIOR_PARAMETERS
 
     true_values = get_datastream_true_values_from_params(params_df)
 
@@ -1058,87 +1118,32 @@ def plot_datastream_params(df, output_file=None, params_df=None):
     else:
         plt.show()
 
-    # Create table with HPD validation results
-    hpd_results = []
-    for parameter in parameters:
-        if parameter in df.columns:
-            param_values = df[parameter].dropna().values
-            if len(param_values) > 0:
-                hpd_lower, hpd_upper, median = calculate_hpd(param_values, alpha=0.05)
-                true_value = true_values.get(parameter)
-                in_hpd = (
-                    1
-                    if (true_value is not None and hpd_lower <= true_value <= hpd_upper)
-                    else (0 if true_value is not None else None)
-                )
-                hpd_results.append(
-                    {
-                        "Parameter": parameter,
-                        "inHPD": in_hpd,
-                        "true_value": true_value,
-                        "hpd_lower": hpd_lower,
-                        "hpd_upper": hpd_upper,
-                        "median": median,
-                    }
-                )
-            else:
-                hpd_results.append({"Parameter": parameter, "inHPD": None})
-        else:
-            hpd_results.append({"Parameter": parameter, "inHPD": None})
 
-    hpd_table = pd.DataFrame(hpd_results)
-    basename = output_file.replace("_datastream_paramsestimates.png", "")
-    hpd_table["Simulation"] = basename
-
-    # Save table to CSV
-    if output_file:
-        table_output = f"{basename}_datastreams_hpd_validation_params.csv"
-        hpd_table.to_csv(table_output, index=False)
-        logger.info("HPD validation table saved to %s", table_output)
-    else:
-        logger.info("HPD Validation Table:\n%s", hpd_table.to_string(index=False))
-
-
-def plot_migration_rates(
+def _prepare_migration_rates_context(
     df_original,
     df_datastream,
     params_df=None,
     deme_switches_df=None,
-    output_file=None,
     starting_deme=None,
 ):
     """
-    Plot the migration rates of the datastream MASCOT model.
-    Calculates HPD intervals and plots expected values from params_df if provided.
+    Shared setup: BEAST parameter names, expected values, transition counts, and
+    HPD records (with None placeholders aligned to plot positions).
     """
-    if df_original.empty or df_datastream.empty:
-        logger.warning("No data to plot.")
-        return
-
-    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-
-    # Define parameters and their labels. We always want the first x-position
-    # to represent Start deme -> Secondary deme, and the second to represent
-    # Secondary deme -> Start deme.
-
-    # Base mapping between (from_idx, to_idx) and BEAST parameter names
     pair_to_param = {
         (0, 1): "f_migrationRatesSkyline.I0_to_I1",
         (1, 0): "f_migrationRatesSkyline.I1_to_I0",
     }
 
     if starting_deme is None:
-        # Fallback: keep numeric order
         index_pairs = [(0, 1), (1, 0)]
     else:
-        # Ensure first pair is Start -> Secondary, second is Secondary -> Start
         other_deme = 1 - int(starting_deme)
         index_pairs = [
             (int(starting_deme), other_deme),
             (other_deme, int(starting_deme)),
         ]
 
-    # Resolve parameter order from index pairs
     params = [pair_to_param[(i_from, i_to)] for (i_from, i_to) in index_pairs]
 
     def migration_label(from_idx: int, to_idx: int) -> str:
@@ -1153,13 +1158,11 @@ def plot_migration_rates(
         migration_label(*index_pairs[1]),
     ]
 
-    # Map parameter names to expected value keys in params_df
     expected_keys = {
         "f_migrationRatesSkyline.I0_to_I1": ("beta_0", "0->1"),
         "f_migrationRatesSkyline.I1_to_I0": ("beta_0", "1->0"),
     }
 
-    # Extract expected migration rates from params_df if available
     expected_values = {}
     if params_df is not None and not params_df.empty:
         for param, (param_name, deme_direction) in expected_keys.items():
@@ -1170,46 +1173,28 @@ def plot_migration_rates(
             if not row.empty:
                 expected_values[param] = row["value"].iloc[0]
 
-    # Count deme transitions from deme_switches_df if available
     transition_counts = {}
     if deme_switches_df is not None and not deme_switches_df.empty:
-        # Filter for switches only
         switches_df = deme_switches_df[deme_switches_df["switch"] == "yes"]
-
-        # Get all unique parent-child deme pairs
         unique_pairs = switches_df[["Deme_parent", "Deme_child"]].drop_duplicates()
-
-        # Count transitions for each unique parent->child pair
         for _, row in unique_pairs.iterrows():
             parent_deme = int(row["Deme_parent"])
             child_deme = int(row["Deme_child"])
-
-            # Construct parameter name following the pattern: f_migrationRatesSkyline.I{parent}_to_I{child}
             param_name = f"f_migrationRatesSkyline.I{parent_deme}_to_I{child_deme}"
-
-            # Count transitions for this specific pair
             count = switches_df[
                 (switches_df["Deme_parent"] == parent_deme)
                 & (switches_df["Deme_child"] == child_deme)
             ]["count"].values[0]
             transition_counts[param_name] = count
 
-    # Prepare data for boxplots
-    # Position boxes: 0.75, 1.25 for first param; 1.75, 2.25 for second param
     positions = [0.75, 1.25, 1.75, 2.25]
-    data_to_plot = []
     box_colors = []
-
-    # Calculate HPD intervals for both original and datastream
     hpd_results = []
 
     for param in params:
-        # Original data (COLORS[4])
         original_values = df_original[param].dropna().values
-        data_to_plot.append(original_values)
         box_colors.append(COLORS[4])
 
-        # Calculate HPD for original
         if len(original_values) > 0:
             hpd_lower, hpd_upper, median = calculate_hpd(original_values, alpha=0.05)
             hpd_result = {
@@ -1226,13 +1211,9 @@ def plot_migration_rates(
         else:
             hpd_results.append(None)
 
-        # Datastream data (COLORS[3])
-
         datastream_values = df_datastream[param].dropna().values
-        data_to_plot.append(datastream_values)
         box_colors.append(COLORS[3])
 
-        # Calculate HPD for datastream
         if len(datastream_values) > 0:
             hpd_lower, hpd_upper, median = calculate_hpd(datastream_values, alpha=0.05)
             hpd_result = {
@@ -1248,6 +1229,115 @@ def plot_migration_rates(
             hpd_results.append(hpd_result)
         else:
             hpd_results.append(None)
+
+    return {
+        "params": params,
+        "param_labels": param_labels,
+        "expected_values": expected_values,
+        "hpd_results": hpd_results,
+        "positions": positions,
+        "box_colors": box_colors,
+    }
+
+
+def build_migration_rates_hpd_dataframe(
+    df_original,
+    df_datastream,
+    params_df=None,
+    deme_switches_df=None,
+    starting_deme=None,
+):
+    """
+    Table of migration-rate HPDs for MASCOT vs MASCOT-DS (one row per model x parameter).
+    """
+    if df_original.empty or df_datastream.empty:
+        return pd.DataFrame()
+
+    ctx = _prepare_migration_rates_context(
+        df_original,
+        df_datastream,
+        params_df=params_df,
+        deme_switches_df=deme_switches_df,
+        starting_deme=starting_deme,
+    )
+    rows = [r for r in ctx["hpd_results"] if r is not None]
+    if not rows:
+        return pd.DataFrame()
+    hpd_table = pd.DataFrame(rows)
+    hpd_table["inHPD"] = np.where(
+        (hpd_table["true_value"] >= hpd_table["hpd_lower"])
+        & (hpd_table["true_value"] <= hpd_table["hpd_upper"]),
+        1,
+        0,
+    )
+    return hpd_table
+
+
+def save_migration_rates_hpd_csv(
+    df_original,
+    df_datastream,
+    out_prefix,
+    params_df=None,
+    deme_switches_df=None,
+    starting_deme=None,
+):
+    """
+    Write ``{out_prefix}_hpd_validation_migration_rates.csv``.
+
+    ``out_prefix`` matches the stem used with ``_migration_rates.png`` removed.
+    """
+    if df_original.empty or df_datastream.empty:
+        logger.warning("No migration-rate data to save.")
+        return
+    hpd_table = build_migration_rates_hpd_dataframe(
+        df_original,
+        df_datastream,
+        params_df=params_df,
+        deme_switches_df=deme_switches_df,
+        starting_deme=starting_deme,
+    )
+    if hpd_table.empty:
+        logger.warning("No migration-rate HPD rows to save.")
+        return
+    hpd_table["Simulation"] = out_prefix
+    table_output = f"{out_prefix}_hpd_validation_migration_rates.csv"
+    hpd_table.to_csv(table_output, index=False)
+    logger.info("HPD validation table saved to %s", table_output)
+
+
+def plot_migration_rates(
+    df_original,
+    df_datastream,
+    params_df=None,
+    deme_switches_df=None,
+    output_file=None,
+    starting_deme=None,
+):
+    """
+    Plot the migration rates of the datastream MASCOT model.
+    Expected values from params_df when provided.
+
+    For HPD CSV without figures, use ``save_migration_rates_hpd_csv``.
+    """
+    if df_original.empty or df_datastream.empty:
+        logger.warning("No data to plot.")
+        return
+
+    ctx = _prepare_migration_rates_context(
+        df_original,
+        df_datastream,
+        params_df=params_df,
+        deme_switches_df=deme_switches_df,
+        starting_deme=starting_deme,
+    )
+    params = ctx["params"]
+    param_labels = ctx["param_labels"]
+    expected_values = ctx["expected_values"]
+    hpd_results = ctx["hpd_results"]
+    positions = ctx["positions"]
+    box_colors = ctx["box_colors"]
+
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
 
     # Plot dots and whiskers instead of boxplots
     for pos, color, hpd_data in zip(positions, box_colors, hpd_results):
@@ -1367,21 +1457,8 @@ def plot_migration_rates(
 
     if output_file:
         save_figure_png_and_pdf(output_file)
-
-        # Save HPD results to CSV
-        if hpd_results:
-            hpd_table = pd.DataFrame(hpd_results)
-            hpd_table["inHPD"] = np.where(
-                (hpd_table["true_value"] >= hpd_table["hpd_lower"])
-                & (hpd_table["true_value"] <= hpd_table["hpd_upper"]),
-                1,
-                0,
-            )
-            basename = output_file.replace("_migration_rates.png", "")
-            hpd_table["Simulation"] = basename
-            table_output = f"{basename}_hpd_validation_migration_rates.csv"
-            hpd_table.to_csv(table_output, index=False)
-            logger.info("HPD validation table saved to %s", table_output)
+    else:
+        plt.show()
 
 
 def transform_value(value, show_logscale, is_log_space=False):
@@ -3622,6 +3699,31 @@ def main():
     data = prepare_skyline_plot_data(args)
 
     data["expected_ne_data"].to_csv(f"{args.out_prefix}_expected_ne.csv", index=False)
+
+    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+
+    print(data["log_content_datastream"].columns, data["log_content_datastream"].empty)
+    print(data["log_content_original"].columns, data["log_content_original"].empty)
+
+    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+
+    if not data["log_content_datastream"].empty:
+        print("HEEEEEERRREEEEE")
+        save_datastream_params_hpd_validation_csv(
+            data["log_content_datastream"],
+            data["params_df"],
+            args.out_prefix,
+        )
+
+    if not data["log_content_original"].empty and not data["log_content_datastream"].empty:
+        save_migration_rates_hpd_csv(
+            data["log_content_original"],
+            data["log_content_datastream"],
+            args.out_prefix,
+            params_df=data["params_df"],
+            deme_switches_df=data["deme_switches_df"],
+            starting_deme=data["starting_deme"],
+        )
 
     if not data["hpd_original"].empty:
         output_file = f"{args.out_prefix}_comparison_originalvsdatastream.png"

@@ -130,6 +130,8 @@ def configure_pdf_fonts():
         "Helvetica",
         "sans-serif",
     ]
+    # PDF embedding uses fontTools subsetter, which logs long glyph dumps at INFO.
+    logging.getLogger("fontTools").setLevel(logging.WARNING)
 
 
 # Configure PDF fonts when module is imported
