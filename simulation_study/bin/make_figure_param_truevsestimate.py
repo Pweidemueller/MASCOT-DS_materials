@@ -763,7 +763,7 @@ def main() -> None:
         "caseCounts.dispersion": "CC dispersion",
         "wastewater.scaling": "WW scaling",
         "wastewater.sigma": "WW sigma",
-        "seroprevalence.scaling": "SP scaling",
+        # "seroprevalence.scaling": "SP scaling",  # fixed to 1.0; not estimated
     }
 
     coverage: list[tuple[str, float]] = []

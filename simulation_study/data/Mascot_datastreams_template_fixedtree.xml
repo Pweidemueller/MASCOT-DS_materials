@@ -37,8 +37,8 @@
       <parameter id="seroTestedCounts.Deme2:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">5</parameter>
       <parameter id="seroWithAntibodiesCounts.Deme2:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">3</parameter>
       <parameter id="seroTestedTimes.Deme2:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">0.0</parameter>
-      <parameter id="seroprevalence.scaling.Deme1:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode">1</parameter>
-      <parameter id="seroprevalence.scaling.Deme2:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode">1</parameter>
+      <parameter id="seroprevalence.scaling.Deme1:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" estimate="false" name="stateNode">1</parameter>
+      <parameter id="seroprevalence.scaling.Deme2:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" estimate="false" name="stateNode">1</parameter>
       <parameter id="wastewaterConcentration.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">0.01</parameter>
       <parameter id="wastewaterConcentrationTimes.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">0.0500</parameter>
       <parameter id="wastewaterConcentration.Deme2:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">0.21</parameter>
@@ -159,18 +159,6 @@
             <parameter id="CaseCountsScaling.Deme2.SDLog" spec="parameter.RealParameter" estimate="false" name="S">0.5</parameter>
           </LogNormal>
         </prior>
-        <prior id="SeroprevalenceScaling.Deme1.Prior:SimDataset" name="distribution" x="@seroprevalence.scaling.Deme1:SimDataset">
-          <LogNormal id="SeroprevalenceScaling.Deme1.LogNormal" name="distr">
-            <parameter id="SeroprevalenceScaling.Deme1.MeanLog" spec="parameter.RealParameter" estimate="false" name="M">0.0</parameter>
-            <parameter id="SeroprevalenceScaling.Deme1.SDLog" spec="parameter.RealParameter" estimate="false" name="S">0.2</parameter>
-          </LogNormal>
-        </prior>
-        <prior id="SeroprevalenceScaling.Deme2.Prior:SimDataset" name="distribution" x="@seroprevalence.scaling.Deme2:SimDataset">
-          <LogNormal id="SeroprevalenceScaling.Deme2.LogNormal" name="distr">
-            <parameter id="SeroprevalenceScaling.Deme2.MeanLog" spec="parameter.RealParameter" estimate="false" name="M">0.0</parameter>
-            <parameter id="SeroprevalenceScaling.Deme2.SDLog" spec="parameter.RealParameter" estimate="false" name="S">0.2</parameter>
-          </LogNormal>
-        </prior>
         <prior id="WastewaterScaling.Deme1.Prior:SimDataset" name="distribution" x="@wastewater.scaling.Deme1:SimDataset">
           <LogNormal id="WastewaterScaling.Deme1.LogNormal" name="distr">
             <parameter id="WastewaterScaling.Deme1.MeanLog" spec="parameter.RealParameter" estimate="false" name="M">4.5</parameter>
@@ -204,8 +192,6 @@
         <parameter idref="caseCounts.scaling.Deme1:SimDataset" name="f"/>
         <parameter idref="caseCounts.scaling.Deme2:SimDataset" name="f"/>
         <parameter idref="caseCounts.dispersion:SimDataset" name="f"/>
-        <parameter idref="seroprevalence.scaling.Deme1:SimDataset" name="f"/>
-        <parameter idref="seroprevalence.scaling.Deme2:SimDataset" name="f"/>
         <parameter idref="wastewater.scaling.Deme1:SimDataset" name="f"/>
         <parameter idref="wastewater.scaling.Deme2:SimDataset" name="f"/>
         <parameter idref="wastewater.sigma:SimDataset" name="f"/>
@@ -218,13 +204,11 @@
     <operator id="UpDownPrevScaling.Deme1:SimDataset" spec="mascotdatastreams.operators.UpDownLogScaleOperator" scaleFactor="0.2" weight="1.5" optimise="true">
       <upLogParameter idref="SkylinePrev.Deme1.t:SimDataset"/>
       <downRealParameter idref="caseCounts.scaling.Deme1:SimDataset"/>
-      <downRealParameter idref="seroprevalence.scaling.Deme1:SimDataset"/>
       <downRealParameter idref="wastewater.scaling.Deme1:SimDataset"/>
     </operator>
     <operator id="UpDownPrevScaling.Deme2:SimDataset" spec="mascotdatastreams.operators.UpDownLogScaleOperator" scaleFactor="0.2" weight="1.5" optimise="true">
       <upLogParameter idref="SkylinePrev.Deme2.t:SimDataset"/>
       <downRealParameter idref="caseCounts.scaling.Deme2:SimDataset"/>
-      <downRealParameter idref="seroprevalence.scaling.Deme2:SimDataset"/>
       <downRealParameter idref="wastewater.scaling.Deme2:SimDataset"/>
     </operator>
     <operator id="CaseCountsDispersionScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@caseCounts.dispersion:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.5"/>
@@ -257,8 +241,6 @@
       <parameter idref="caseCounts.dispersion:SimDataset" name="log"/>
       <log idref="seroprevalenceLikelihood.Deme1.t:SimDataset" name="log"/>
       <log idref="seroprevalenceLikelihood.Deme2.t:SimDataset" name="log"/>
-      <parameter idref="seroprevalence.scaling.Deme1:SimDataset" name="log"/>
-      <parameter idref="seroprevalence.scaling.Deme2:SimDataset" name="log"/>
       <log idref="wastewaterLikelihood.Deme1.t:SimDataset" name="log"/>
       <log idref="wastewaterLikelihood.Deme2.t:SimDataset" name="log"/>
       <parameter idref="wastewater.scaling.Deme1:SimDataset" name="log"/>

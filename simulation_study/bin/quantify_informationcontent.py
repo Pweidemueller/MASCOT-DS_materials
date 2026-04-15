@@ -1533,8 +1533,8 @@ def main():
         "caseCounts.scaling.Deme2:SimDataset",
         "wastewater.scaling.Deme1:SimDataset",
         "wastewater.scaling.Deme2:SimDataset",
-        "seroprevalence.scaling.Deme1:SimDataset",
-        "seroprevalence.scaling.Deme2:SimDataset",
+        # "seroprevalence.scaling.Deme1:SimDataset",  # fixed to 1.0; not estimated
+        # "seroprevalence.scaling.Deme2:SimDataset",  # fixed to 1.0; not estimated
         "caseCounts.dispersion:SimDataset",
         "wastewater.sigma:SimDataset",
     ]
@@ -1547,8 +1547,8 @@ def main():
         "wastewater.scaling.Deme1:SimDataset": "WW scaling Deme1",
         "wastewater.scaling.Deme2:SimDataset": "WW scaling Deme2",
         "wastewater.sigma:SimDataset": "WW sigma",
-        "seroprevalence.scaling.Deme1:SimDataset": "SP scaling Deme1",
-        "seroprevalence.scaling.Deme2:SimDataset": "SP scaling Deme2",
+        # "seroprevalence.scaling.Deme1:SimDataset": "SP scaling Deme1",  # fixed to 1.0; not estimated
+        # "seroprevalence.scaling.Deme2:SimDataset": "SP scaling Deme2",  # fixed to 1.0; not estimated
     }
     all_simulations = sorted(combined_df["simulation_base"].unique())
 

@@ -34,8 +34,8 @@ DATASTREAM_POSTERIOR_PARAMETERS = (
     "caseCounts.dispersion:SimDataset",
     "caseCounts.scaling.Deme1:SimDataset",
     "caseCounts.scaling.Deme2:SimDataset",
-    "seroprevalence.scaling.Deme1:SimDataset",
-    "seroprevalence.scaling.Deme2:SimDataset",
+    # "seroprevalence.scaling.Deme1:SimDataset",  # fixed to 1.0; not estimated
+    # "seroprevalence.scaling.Deme2:SimDataset",  # fixed to 1.0; not estimated
     "wastewater.scaling.Deme1:SimDataset",
     "wastewater.scaling.Deme2:SimDataset",
     "wastewater.sigma:SimDataset",
@@ -995,10 +995,10 @@ def get_datastream_true_values_from_params(params_df):
         row = params_df[(params_df["parameter"] == param_name)]
         if not row.empty:
             true_values[beast_name] = float(row["value"].iloc[0])
-    # Per-deme: ds_cc_scaling, ds_sp_scaling, ds_ww_scaling -> Deme1 (deme 0), Deme2 (deme 1)
+    # Per-deme: ds_cc_scaling, ds_ww_scaling -> Deme1 (deme 0), Deme2 (deme 1)
+    # ds_sp_scaling is fixed to 1.0 and not estimated; excluded from true-value lookup.
     for param_name, beast_suffix in [
         ("ds_cc_scaling", "caseCounts.scaling.{}:SimDataset"),
-        ("ds_sp_scaling", "seroprevalence.scaling.{}:SimDataset"),
         ("ds_ww_scaling", "wastewater.scaling.{}:SimDataset"),
     ]:
         for deme_idx, deme_label in enumerate(["Deme1", "Deme2"]):

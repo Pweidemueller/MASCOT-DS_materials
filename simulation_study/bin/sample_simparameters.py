@@ -240,7 +240,8 @@ def main() -> None:
     ww_sigma = rng.lognormal(mean=-0.7, sigma=0.3)
 
     cc_scaling = rng.lognormal(mean=-3.0, sigma=0.5, size=n_demes)
-    sp_scaling = rng.lognormal(mean=0.0, sigma=0.2, size=n_demes)
+    # sp_scaling = rng.lognormal(mean=0.0, sigma=0.2, size=n_demes)  # formerly sampled; now fixed to 1.0
+    sp_scaling = np.ones(n_demes)
     ww_scaling = rng.lognormal(mean=4.5, sigma=0.5, size=n_demes)
 
     # Build sampled parameters DF
