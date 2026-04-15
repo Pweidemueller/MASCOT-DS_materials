@@ -260,10 +260,15 @@ def simulate_wastewater(
     # sampling takes place only every X days
     if sample_frequency is None:
         sampled_time_idx = np.arange(prevalence.shape[0])
+        target_times = prevalence["t_days_wastewater"].values
     else:
         target_times, sampled_time_idx = find_closest_timepoints(
             prevalence["t_days_wastewater"], interval=sample_frequency
         )
+    # only observe wastewater when at least one person is infected
+    infected_mask = prevalence["value"].values[sampled_time_idx] >= 1
+    sampled_time_idx = sampled_time_idx[infected_mask]
+    target_times = np.asarray(target_times)[infected_mask]
     tmp = prevalence["value"].values[sampled_time_idx]
     mu_real = tmp / N * scaling_factor
     mu_ln = np.log(mu_real + 1e-2) - sigma * sigma * 0.5

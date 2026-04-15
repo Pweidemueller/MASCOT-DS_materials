@@ -204,7 +204,7 @@ process MAKE_MASCOT_XML {
 // [1.6] publishDir enabled for MASCOT outputs
 process RUN_MASCOT {
     tag "${xmlfile.baseName} (seed=${seed})"
-    publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy', pattern: "${seed}_${xmlfile.baseName}.*"
+    // publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy', pattern: "${seed}_${xmlfile.baseName}.*"
 
     input:
     tuple val(simNb), val(ndemes), path(trees), path(traj), path(nexus), path(xmlfile), val(seed), val(base_name), val(variant_type)
