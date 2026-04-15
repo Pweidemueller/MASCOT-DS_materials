@@ -192,7 +192,7 @@ def plot_migration_direction_model_boxplots(
     configure_pdf_fonts()
     direction_order = list(MIGRATION_DIRECTION_LABELS)
     models = [
-        (MODEL_MASCOT, COLORS[4]),
+        # (MODEL_MASCOT, COLORS[4]),
         (MODEL_MASCOT_DS, COLORS[3]),
     ]
     n_dir = len(direction_order)
@@ -505,6 +505,7 @@ def plot_migration_true_vs_estimate_scatters(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     frame = migration_frame_for_true_vs_estimate(df_mig, starting_deme_by_sim)
+    frame = frame[frame["Model"] == MODEL_MASCOT_DS]
     model_colors = {
         MODEL_MASCOT: COLORS[4],
         MODEL_MASCOT_DS: COLORS[3],
