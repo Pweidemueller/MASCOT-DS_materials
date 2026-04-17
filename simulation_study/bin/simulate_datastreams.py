@@ -237,8 +237,7 @@ def simulate_wastewater(
 ) -> pd.DataFrame:
     """Simulate wastewater concentration measurements from prevalence.
 
-    Largely follows true prevalence with a possible detection delay and lognormal sigma.
-    Sampling may occur at specified intervals.
+    Prevalence is informing the real median of the lognormal distribution of wastewater concentration.
 
     Args:
         prevalence: Dataframe with columns ['t', 'value'] for the I population per sample/index.
@@ -270,10 +269,12 @@ def simulate_wastewater(
     sampled_time_idx = sampled_time_idx[infected_mask]
     target_times = np.asarray(target_times)[infected_mask]
     tmp = prevalence["value"].values[sampled_time_idx]
-    mu_real = tmp / N * scaling_factor
-    mu_ln = np.log(mu_real + 1e-2) - sigma * sigma * 0.5
+    # real median of the lognormal distribution of wastewater concentration
+    median_real = tmp / N * scaling_factor
+    # clip to small epsilon (could be considered a detection limit) to avoid (log(0) but also not too small to avoid numerical issues when fitting with MASCOT (since MASCOT prevalence can't fit 0 prevalence and will instead try to fit super small values)
+    median_real = np.clip(median_real, 1e-3, None)
+    mu_ln = np.log(median_real)
     # PMMoV normalised pathogen concentration (cp/g)
-    # add small epsilon to avoid (log(0) but also not too small to avoid numerical issues when fitting with MASCOT (since MASCOT prevalence can't fit 0 prevalence and will instead try to fit super small values)
     conc = rng.lognormal(mu_ln, sigma)
     new_prevalence = prevalence.loc[sampled_time_idx].copy().reset_index(drop=True)
     new_prevalence["wastewater"] = conc
