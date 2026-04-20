@@ -236,7 +236,7 @@ def main() -> None:
     # Sample datastream parameters
     cc_dispersion = float(
         rng.lognormal(mean=-1.0, sigma=0.5)
-    )  # samples k of the Negative Binomial distribution for case counts
+    ) 
     ww_sigma = rng.lognormal(mean=-0.7, sigma=0.3)
 
     cc_scaling = rng.lognormal(mean=-3.0, sigma=0.5, size=n_demes)

@@ -382,6 +382,7 @@ def add_prevalence_bias_and_hpd_width_real_space(df: pd.DataFrame) -> pd.DataFra
     lo = np.exp(lo_ln)
     hi = np.exp(hi_ln)
     out["bias_prev_real"] = med - ev
+    out["bias_prev_real_rel"] = (med - ev) / np.maximum(ev, 1e-12)
     width = hi - lo
     out["rel_hpd_width_prev_real"] = width / np.maximum(np.abs(med), 1e-12)
     return out

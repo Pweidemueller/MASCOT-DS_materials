@@ -774,8 +774,8 @@ workflow {
 
     // PLOT_HPD_VALIDATION(plot_inputs)
 
-    // ── [2] Per-simulation publication figures ──────────────────────────
-    MAKE_INDIVIDUAL_SIM_FIGURES(analysis_inputs)
+    // // ── [2] Per-simulation publication figures ──────────────────────────
+    // MAKE_INDIVIDUAL_SIM_FIGURES(analysis_inputs)
 
     // ── [2] Combine Ne HPD validation: original + datastreams → Model column
     ne_original = concatenated_csvs.concatenated_csv

@@ -46,6 +46,7 @@ from hpd_validation_timeseries import (
     MODEL_COLORS_DEFAULT,
     add_bias_and_hpd_width_columns,
     add_prevalence_bias_and_hpd_width_real_space,
+    add_prevalence_deme_role_column,
     assert_matching_secondary_min_time_index,
     median_quantile_metric_by_time_index_role,
     median_quantile_metric_by_time_index_role_model,
@@ -529,6 +530,77 @@ def plot_migration_true_vs_estimate_scatters(
         plt.close(fig)
 
 
+PREVALENCE_DEME_ROLE_TITLES: dict[str, str] = {
+    "start": "Prevalence (start deme)",
+    "secondary": "Prevalence (secondary deme)",
+}
+
+
+def plot_prevalence_true_vs_estimate_scatters(
+    df_prev: pd.DataFrame,
+    output_dir: Path,
+    trajectory_meta: dict[str, tuple[int, float, float]],
+    *,
+    log_space: bool = False,
+    filename_prefix: str = "prevalence_true_vs_estimate",
+) -> None:
+    """
+    One scatter figure per deme role (start / secondary): true prevalence on x,
+    posterior median on y, HPD whiskers. Rows where ``expectedlogPrev`` is NaN
+    are dropped; no all-simulations-arrived filter is applied.
+
+    When *log_space* is False (default) values are exponentiated to the natural
+    prevalence scale; when True the log-space columns are used directly.
+    """
+    required = [
+        "logPrevalence",
+        "logPrevalence_hpd_lower",
+        "logPrevalence_hpd_upper",
+        "expectedlogPrev",
+    ]
+    missing = [c for c in required if c not in df_prev.columns]
+    if missing:
+        print(
+            f"Skipping prevalence true-vs-estimate scatter: "
+            f"CSV missing columns {missing}"
+        )
+        return
+
+    starting_deme_by_sim = {s: m[0] for s, m in trajectory_meta.items()}
+    df = add_prevalence_deme_role_column(df_prev, starting_deme_by_sim)
+    df["expectedlogPrev"] = pd.to_numeric(df["expectedlogPrev"], errors="coerce")
+    df = df.dropna(subset=["expectedlogPrev"])
+
+    transform = (lambda x: x) if log_space else np.exp
+    df["true_value"] = transform(df["expectedlogPrev"])
+    df["median"] = transform(
+        pd.to_numeric(df["logPrevalence"], errors="coerce")
+    )
+    df["hpd_lower"] = transform(
+        pd.to_numeric(df["logPrevalence_hpd_lower"], errors="coerce")
+    )
+    df["hpd_upper"] = transform(
+        pd.to_numeric(df["logPrevalence_hpd_upper"], errors="coerce")
+    )
+    df["series_label"] = ""
+
+    scale_label = "log " if log_space else ""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for role_key, panel_title in PREVALENCE_DEME_ROLE_TITLES.items():
+        title = f"{scale_label}{panel_title}"
+        sub = df[df["deme_role"] == role_key]
+        if sub.empty:
+            continue
+        suffix = f"_log" if log_space else ""
+        out_png = output_dir / f"{filename_prefix}_{role_key}{suffix}.png"
+        fig, ax = plt.subplots(figsize=(2.5, 2.5))
+        plot_param_true_vs_estimate(ax, sub, title=title)
+        fig.tight_layout()
+        save_figure_png_and_pdf(out_png)
+        plt.close(fig)
+
+
 def run_time_series_hpd_validation_figures(
     *,
     combined_ne_csv: Path | None,
@@ -671,6 +743,16 @@ def run_time_series_hpd_validation_figures(
                 ylabel="Relative HPD width of\nprevalence estimate",
                 color=COLORS[3],
                 draw_zero_line=False,
+            )
+            agg_p_bias_rel = median_quantile_metric_by_time_index_role(
+                df_prev_prepared_bias, "bias_prev_real_rel"
+            )
+            plot_two_panel_metric_single_series(
+                agg_p_bias_rel,
+                output_dir / "prevalence_bias_prev_rel_over_time.png",
+                ylabel="Relative bias of\nprevalence estimate",
+                color=COLORS[3],
+                draw_zero_line=True,
             )
 
 
@@ -886,6 +968,12 @@ def main() -> None:
             args.output_dir / "prevalence_coverage_over_time.png",
             trajectory_meta,
             ne_reference_df=df_ne_reference,
+        )
+        plot_prevalence_true_vs_estimate_scatters(
+            df_prev,
+            args.output_dir,
+            trajectory_meta,
+            log_space=True,
         )
 
     if trajectory_meta is not None:
