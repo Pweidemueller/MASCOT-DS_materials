@@ -1738,6 +1738,7 @@ def _plot_prevalence_panel(
     n_demes=1,
     fontsizes=None,
     fontsize_tick=None,
+    show_legend=True,
 ):
     """
     Draw the prevalence panel (subplot 1) for a single deme on the given axis.
@@ -1833,8 +1834,13 @@ def _plot_prevalence_panel(
                 ax3 = ax.twinx()
                 ax3.set_zorder(2)
                 ax3.patch.set_visible(False)
-                if fig is not None and n_demes >= 1:
-                    offset_points = (fig.get_figwidth() / n_demes) * 8
+                if fig is not None:
+                    # Offset the second twin spine by a fraction of the *actual*
+                    # subplot width (not the whole figure), so the wastewater axis
+                    # sits just outside the case-counts axis regardless of how
+                    # the figure is laid out.
+                    ax_width_inches = ax.get_position().width * fig.get_figwidth()
+                    offset_points = ax_width_inches * 8
                     ax3.spines["right"].set_position(("outward", offset_points))
             else:
                 ax3 = ax.twinx()
@@ -1979,46 +1985,47 @@ def _plot_prevalence_panel(
     ax.set_title(title, fontsize=fontsizes[0], pad=10)
     ax.spines["top"].set_visible(False)
 
-    legend_handles = [
-        Line2D(
-            [],
-            [],
-            color=COLORS[0],
-            linewidth=2,
-            alpha=0.6,
-            label="Expected",
-        ),
-        Line2D(
-            [],
-            [],
-            color=COLORS[3],
-            linewidth=2,
-            alpha=0.6,
-            label="Inferred",
-        ),
-        Line2D(
-            [],
-            [],
-            color="dimgrey",
-            linewidth=1,
-            linestyle="solid",
-            marker="o",
-            markersize=2,
-            label="Wastewater",
-        ),
-        Patch(
-            facecolor="silver",
-            edgecolor="silver",
-            label="Case counts",
-        ),
-    ]
-    ax.legend(
-        handles=legend_handles,
-        loc="upper left",
-        bbox_to_anchor=(0.0, 0.90),
-        fontsize=fontsize_tick,
-        frameon=False,
-    )
+    if show_legend:
+        legend_handles = [
+            Line2D(
+                [],
+                [],
+                color=COLORS[0],
+                linewidth=2,
+                alpha=0.6,
+                label="Expected Prev.",
+            ),
+            Line2D(
+                [],
+                [],
+                color=COLORS[3],
+                linewidth=2,
+                alpha=0.6,
+                label="Inferred Prev.",
+            ),
+            Line2D(
+                [],
+                [],
+                color="dimgrey",
+                linewidth=1,
+                linestyle="solid",
+                marker="o",
+                markersize=2,
+                label="WW",
+            ),
+            Patch(
+                facecolor="silver",
+                edgecolor="silver",
+                label="CC",
+            ),
+        ]
+        ax.legend(
+            handles=legend_handles,
+            loc="upper left",
+            bbox_to_anchor=(0.0, 0.90),
+            fontsize=fontsize_tick,
+            frameon=False,
+        )
 
 
 def _plot_ne_panel(
@@ -2165,6 +2172,7 @@ def _plot_cumincidence_panel(
     deme_popsizes=None,
     fontsizes=None,
     fontsize_tick=None,
+    show_legend=True,
 ):
     """
     Draw the cumulative incidence panel (subplot 3) for a single deme on the given axis.
@@ -2293,44 +2301,45 @@ def _plot_cumincidence_panel(
     ax.set_title(title, fontsize=fontsizes[0], pad=10)
     ax.spines["top"].set_visible(False)
 
-    legend_handles = [
-        Line2D(
-            [],
-            [],
-            color=COLORS[0],
-            linewidth=2,
-            alpha=0.8,
-            label="Expected",
-        ),
-        Line2D(
-            [],
-            [],
-            color=COLORS[3],
-            linewidth=2,
-            alpha=0.6,
-            label="Inferred",
-        ),
-    ]
-    if ax2 is not None:
-        legend_handles.append(
+    if show_legend:
+        legend_handles = [
             Line2D(
                 [],
                 [],
-                color="dimgrey",
-                linewidth=1,
-                linestyle="solid",
-                marker="o",
-                markersize=4,
-                label="Seroprevalence",
+                color=COLORS[0],
+                linewidth=2,
+                alpha=0.8,
+                label="Expected Cum. inc.",
+            ),
+            Line2D(
+                [],
+                [],
+                color=COLORS[3],
+                linewidth=2,
+                alpha=0.6,
+                label="Inferred Cum. inc.",
+            ),
+        ]
+        if ax2 is not None:
+            legend_handles.append(
+                Line2D(
+                    [],
+                    [],
+                    color="dimgrey",
+                    linewidth=1,
+                    linestyle="solid",
+                    marker="o",
+                    markersize=4,
+                    label="SP",
+                )
             )
+        ax.legend(
+            handles=legend_handles,
+            loc="upper left",
+            bbox_to_anchor=(0.0, 0.90),
+            fontsize=fontsize_tick,
+            frameon=False,
         )
-    ax.legend(
-        handles=legend_handles,
-        loc="upper left",
-        bbox_to_anchor=(0.0, 0.90),
-        fontsize=fontsize_tick,
-        frameon=False,
-    )
 
 
 def plot_skyline_ne(

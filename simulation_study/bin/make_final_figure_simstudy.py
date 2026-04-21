@@ -1105,9 +1105,9 @@ def plot_final_figure(
 
     # --- parameters: relative bias per row ((median - true) / true) -----
     df_params = df_params.copy()
-    df_params["rel_bias"] = (
-        df_params["median"] - df_params["true_value"]
-    ) / df_params["true_value"]
+    df_params["rel_bias"] = (df_params["median"] - df_params["true_value"]) / df_params[
+        "true_value"
+    ]
 
     # --- migration: restrict to MASCOT-DS and derive relative bias -----
     mig_enriched = add_migration_direction_column(df_mig, starting_deme_by_sim)
@@ -1137,7 +1137,7 @@ def plot_final_figure(
     )
 
     # --- figure & gridspec ----------------------------------------------
-    fig = plt.figure(figsize=(14, 11))
+    fig = plt.figure(figsize=(14, 15))
     gs = fig.add_gridspec(nrows=6, ncols=11, hspace=0.9, wspace=0.9)
 
     # --- Placeholder for external graphic (rows 0-1, cols 0-4) -----------
@@ -1339,6 +1339,7 @@ def _place_example_sim_panels(
     for deme in demes:
         role = role_for_deme[int(deme)]
         cslice = cell_specs[role]
+        show_legend = role == "secondary"
 
         ax_prev = fig.add_subplot(gs[0, cslice])
         _plot_prevalence_panel(
@@ -1356,6 +1357,7 @@ def _place_example_sim_panels(
             case_counts_P1=False,
             fig=fig,
             n_demes=1,
+            show_legend=show_legend,
             **common_kw,
         )
         if max_time is not None:
@@ -1372,6 +1374,7 @@ def _place_example_sim_panels(
                 "validation_data_datastreams_cumIncidence"
             ),
             deme_popsizes=example_sim_data.get("deme_popsizes"),
+            show_legend=show_legend,
             **common_kw,
         )
         ax_cum.set_title(None)
@@ -1697,7 +1700,9 @@ def main() -> None:
             if args.final_figure_out is not None
             else args.output_dir / "final_figure.png"
         )
-        example_sim_data = _load_example_sim_data(args)
+        example_sim_data = _load_example_sim_data(
+            args, out_prefix=args.output_dir + "/individual_sim"
+        )
         plot_final_figure(
             df_params=df,
             df_mig=df_mig,
@@ -1709,7 +1714,7 @@ def main() -> None:
         )
 
 
-def _load_example_sim_data(args: argparse.Namespace) -> dict:
+def _load_example_sim_data(args: argparse.Namespace, out_prefix: str) -> dict:
     """
     Build an argparse.Namespace with the shape expected by
     :func:`analyse_posteriors.prepare_skyline_plot_data` (i.e. the same fields
@@ -1724,7 +1729,7 @@ def _load_example_sim_data(args: argparse.Namespace) -> dict:
         wastewater_file=args.example_wastewater_file,
         params_csv=args.example_params_csv,
         deme_switches_csv=args.example_deme_switches_csv,
-        out_prefix=None,
+        out_prefix=out_prefix,
         cumulative_incidence_deme1=args.example_cumulative_incidence_deme1,
         cumulative_incidence_deme2=args.example_cumulative_incidence_deme2,
         nedynamics_deme1=args.example_nedynamics_deme1,

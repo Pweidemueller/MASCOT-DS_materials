@@ -12,6 +12,21 @@ from constants import COLORBLINDFR, COLORS, VARIANT_COLORS  # noqa: F401 — re-
 
 logger = logging.getLogger(__name__)
 
+# Default font sizes
+DEFAULT_FONTSIZES = {
+    "tick_label": 8,
+    "axis_label": 10,
+    "legend": 8,
+    "title": 10,
+}
+
+# List form [title, axis_label, tick_label] for use with set_axis_fontsizes()
+FONTSIZES_LIST = [
+    DEFAULT_FONTSIZES["title"],
+    DEFAULT_FONTSIZES["axis_label"],
+    DEFAULT_FONTSIZES["tick_label"],
+]
+
 
 # ---------------------------------------------------------------------------
 # Trajectory utility functions (shared across simulate_datastreams, analyse_posteriors)
@@ -77,21 +92,6 @@ def t_first_infected_in_deme(traj_df: pd.DataFrame, deme: int) -> float:
     if sub.empty:
         raise ValueError(f"No infected (I) trajectory rows for deme {deme}.")
     return float(sub["t"].min())
-
-# Default font sizes
-DEFAULT_FONTSIZES = {
-    "tick_label": 8,
-    "axis_label": 10,
-    "legend": 8,
-    "title": 12,
-}
-
-# List form [title, axis_label, tick_label] for use with set_axis_fontsizes()
-FONTSIZES_LIST = [
-    DEFAULT_FONTSIZES["title"],
-    DEFAULT_FONTSIZES["axis_label"],
-    DEFAULT_FONTSIZES["tick_label"],
-]
 
 
 def set_axis_fontsizes(ax, fontsizes, xlabel=None, ylabel=None):
