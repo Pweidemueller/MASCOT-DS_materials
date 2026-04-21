@@ -37,7 +37,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.patches import Patch
 
 from constants import MODEL_MASCOT, MODEL_MASCOT_DS
 from plot_utils import COLORS, FONTSIZES_LIST, configure_pdf_fonts, save_figure_png_and_pdf
@@ -67,6 +66,227 @@ MIGRATION_DIRECTION_LABELS: tuple[str, ...] = (
 # True-vs-inferred scatter: HPD whiskers slightly thicker than default dots; alpha on bars only
 TRUE_VS_ESTIMATE_HPD_ELINEWIDTH = 0.72
 TRUE_VS_ESTIMATE_HPD_ALPHA = 0.5
+
+# Order and display labels for per-simulation parameter groups (top-to-bottom
+# on horizontal summary panels; left-to-right on scatter panels).
+PARAM_GROUP_ORDER: tuple[str, ...] = (
+    "caseCounts.scaling",
+    "caseCounts.dispersion",
+    "wastewater.scaling",
+    "wastewater.sigma",
+)
+
+PARAM_GROUP_TITLES: dict[str, str] = {
+    "caseCounts.scaling": "CC scaling",
+    "caseCounts.dispersion": "CC dispersion",
+    "wastewater.scaling": "WW scaling",
+    "wastewater.sigma": "WW sigma",
+    # "seroprevalence.scaling": "SP scaling" — fixed to 1.0; not estimated
+}
+
+# Parameter groups whose per-deme rows are collapsed into a single series
+# (no legend, single color) in plot_final_figure. Remove an entry to restore
+# per-deme styling for that group.
+COLLAPSE_SERIES_GROUPS: frozenset[str] = frozenset({
+    "caseCounts.scaling",
+    "wastewater.scaling",
+})
+
+
+# ---------------------------------------------------------------------------
+# Reusable axis-level helpers
+# ---------------------------------------------------------------------------
+
+
+def values_by_group(
+    df: pd.DataFrame,
+    group_col: str,
+    value_col: str,
+    groups: list[str],
+) -> dict[str, np.ndarray]:
+    """Per-group numeric arrays dropped of NaN, keyed by ``groups`` order."""
+    out: dict[str, np.ndarray] = {}
+    for g in groups:
+        sub = df[df[group_col] == g]
+        out[g] = sub[value_col].dropna().to_numpy(dtype=float)
+    return out
+
+
+def coverage_percent_by_group(
+    df: pd.DataFrame,
+    group_col: str,
+    groups: list[str],
+) -> list[float]:
+    """% of rows with ``inHPD == 1`` per group (NaN for empty groups)."""
+    out: list[float] = []
+    for g in groups:
+        sub = df[df[group_col] == g]
+        if sub.empty:
+            out.append(float("nan"))
+        else:
+            out.append(100.0 * sub["inHPD"].mean())
+    return out
+
+
+def plot_horizontal_coverage_barplot(
+    ax,
+    labels: list[str],
+    coverages: list[float],
+    *,
+    color: str = COLORS[3],
+    xlabel: str = "Coverage (%)",
+    show_ylabels: bool = True,
+    xlim: tuple[float, float] = (0.0, 100.0),
+) -> None:
+    """Horizontal bars; ``labels[0]`` drawn at the top."""
+    configure_pdf_fonts()
+    y = np.arange(len(labels), dtype=float)
+    ax.barh(y, coverages, color=color, edgecolor="white", linewidth=0.6)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels if show_ylabels else [""] * len(labels))
+    ax.invert_yaxis()
+    ax.set_xlim(*xlim)
+    ax.set_xlabel(xlabel, fontsize=FONTSIZES_LIST[1])
+    ax.tick_params(labelsize=FONTSIZES_LIST[2])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def plot_horizontal_bias_boxplot(
+    ax,
+    labels: list[str],
+    values_by_label: dict[str, np.ndarray],
+    *,
+    color: str = COLORS[3],
+    xlabel: str = "Bias",
+    show_ylabels: bool = True,
+    draw_zero_vline: bool = True,
+    box_width: float = 0.5,
+) -> None:
+    """Horizontal boxplots (one per label); ``labels[0]`` drawn at the top."""
+    configure_pdf_fonts()
+    y = np.arange(len(labels), dtype=float)
+    data_list = [
+        values_by_label[lbl] if values_by_label[lbl].size > 0 else np.array([np.nan])
+        for lbl in labels
+    ]
+    bp = ax.boxplot(
+        data_list,
+        positions=y,
+        vert=False,
+        patch_artist=True,
+        widths=box_width,
+        showfliers=True,
+        whis=1.5,
+    )
+    for patch in bp["boxes"]:
+        patch.set_facecolor(color)
+        patch.set_edgecolor("0.25")
+        patch.set_linewidth(0.6)
+    for el in bp["medians"]:
+        el.set_color("0.15")
+        el.set_linewidth(0.9)
+    for el in bp["whiskers"] + bp["caps"]:
+        el.set_color("0.35")
+        el.set_linewidth(0.6)
+    if draw_zero_vline:
+        ax.axvline(0.0, color="0.75", lw=0.7, ls="--", zorder=0)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels if show_ylabels else [""] * len(labels))
+    ax.invert_yaxis()
+    ax.set_xlabel(xlabel, fontsize=FONTSIZES_LIST[1])
+    ax.tick_params(labelsize=FONTSIZES_LIST[2])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+# Alpha for median-line+quantile-band time-series panels; mirrors hpd_validation_timeseries.
+_TIME_SERIES_BAND_ALPHA = 0.22
+
+
+def plot_time_series_coverage_on_axis(
+    ax,
+    agg: pd.DataFrame,
+    role_key: str,
+    *,
+    color: str = COLORS[3],
+    title: str = "",
+    show_xlabel: bool = True,
+    show_ylabel: bool = True,
+) -> None:
+    """Coverage(%) vs time_index for a single deme role."""
+    configure_pdf_fonts()
+    sub = agg[agg["deme_role"] == role_key].sort_values("time_index")
+    ax.plot(
+        sub["time_index"],
+        sub["coverage"] * 100.0,
+        color=color,
+        marker="o",
+        ms=2.5,
+        lw=0.9,
+    )
+    ax.set_ylim(0.0, 103.0)
+    ax.set_yticks(np.linspace(0.0, 100.0, 6))
+    ax.set_xlim(0.0, 103.0)
+    if title:
+        ax.set_title(title, fontsize=FONTSIZES_LIST[0])
+    set_axis_fontsizes(
+        ax,
+        FONTSIZES_LIST,
+        xlabel="Time index" if show_xlabel else None,
+        ylabel="Coverage (%)" if show_ylabel else None,
+    )
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def plot_time_series_metric_on_axis(
+    ax,
+    agg: pd.DataFrame,
+    role_key: str,
+    *,
+    color: str = COLORS[3],
+    ylabel: str = "",
+    title: str = "",
+    show_xlabel: bool = True,
+    show_ylabel: bool = True,
+    draw_zero_line: bool = False,
+    band_alpha: float = _TIME_SERIES_BAND_ALPHA,
+) -> None:
+    """Median line + simulation-level quantile band vs time_index (single series)."""
+    configure_pdf_fonts()
+    sub = agg[agg["deme_role"] == role_key].sort_values("time_index")
+    if not sub.empty:
+        ax.fill_between(
+            sub["time_index"],
+            sub["q025"],
+            sub["q975"],
+            color=color,
+            alpha=band_alpha,
+            linewidth=0,
+            zorder=1,
+        )
+        ax.plot(
+            sub["time_index"],
+            sub["median_value"],
+            color=color,
+            lw=0.9,
+            zorder=2,
+        )
+    if draw_zero_line:
+        ax.axhline(0.0, color="0.75", lw=0.7, ls="--", zorder=0)
+    ax.set_xlim(0.0, 103.0)
+    if title:
+        ax.set_title(title, fontsize=FONTSIZES_LIST[0])
+    set_axis_fontsizes(
+        ax,
+        FONTSIZES_LIST,
+        xlabel="Time index" if show_xlabel else None,
+        ylabel=ylabel if show_ylabel else None,
+    )
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
 
 def trajectory_stem_from_simulation_id(simulation: str) -> str:
     """
@@ -165,86 +385,6 @@ def migration_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _values_for_model_direction(
-    df: pd.DataFrame,
-    value_col: str,
-    model: str,
-    direction: str,
-) -> np.ndarray:
-    sub = df[(df["Model"] == model) & (df["migration_direction"] == direction)]
-    return sub[value_col].dropna().to_numpy(dtype=float)
-
-
-def plot_migration_direction_model_boxplots(
-    ax,
-    df: pd.DataFrame,
-    value_col: str,
-    *,
-    xlabel: str,
-    show_y_ticklabels: bool = True,
-    show_legend: bool = True,
-    draw_zero_vline: bool = False,
-) -> None:
-    """
-    Horizontal boxplots: x = value_col, y = migration direction.
-    For each direction, MASCOT (COLORS[4]) and MASCOT-DS (COLORS[3]) are drawn
-    side by side (small gap).
-    """
-    configure_pdf_fonts()
-    direction_order = list(MIGRATION_DIRECTION_LABELS)
-    models = [
-        # (MODEL_MASCOT, COLORS[4]),
-        (MODEL_MASCOT_DS, COLORS[3]),
-    ]
-    n_dir = len(direction_order)
-    group_centers = np.arange(n_dir, dtype=float)
-    offset = 0.18
-    box_width = 0.32
-
-    legend_handles: list[Patch] = []
-    for model_name, color in models:
-        data_list = []
-        positions = []
-        for di, dlabel in enumerate(direction_order):
-            vals = _values_for_model_direction(df, value_col, model_name, dlabel)
-            data_list.append(vals if vals.size > 0 else np.array([np.nan]))
-            pos = group_centers[di] + (-offset if model_name == MODEL_MASCOT else offset)
-            positions.append(pos)
-        bp = ax.boxplot(
-            data_list,
-            positions=positions,
-            vert=False,
-            patch_artist=True,
-            widths=box_width,
-            showfliers=True,
-            whis=1.5,
-        )
-        for patch in bp["boxes"]:
-            patch.set_facecolor(color)
-            patch.set_edgecolor("0.25")
-            patch.set_linewidth(0.6)
-        for el in bp["medians"]:
-            el.set_color("0.15")
-            el.set_linewidth(0.9)
-        for el in bp["whiskers"] + bp["caps"]:
-            el.set_color("0.35")
-            el.set_linewidth(0.6)
-        legend_handles.append(
-            Patch(facecolor=color, edgecolor="0.25", linewidth=0.6, label=model_name)
-        )
-
-    if draw_zero_vline:
-        ax.axvline(0.0, color="0.75", lw=0.7, ls="--", zorder=0)
-    ax.set_yticks(group_centers)
-    ax.set_yticklabels(direction_order)
-    ax.set_xlabel(xlabel, fontsize=FONTSIZES_LIST[1])
-    ax.tick_params(labelsize=FONTSIZES_LIST[2])
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    if show_legend:
-        ax.legend(handles=legend_handles, frameon=False, fontsize=FONTSIZES_LIST[2], loc="best")
-
-
 def plot_migration_bias_uncertainty_figure(
     df: pd.DataFrame,
     output_png: Path,
@@ -256,23 +396,28 @@ def plot_migration_bias_uncertainty_figure(
     df_plot = migration_derived_metrics(
         add_migration_direction_column(df, starting_deme_by_sim)
     )
+    df_plot = df_plot[df_plot["Model"] == MODEL_MASCOT_DS]
+    directions = list(MIGRATION_DIRECTION_LABELS)
+    bias_by_dir = values_by_group(df_plot, "migration_direction", "bias", directions)
+    width_by_dir = values_by_group(
+        df_plot, "migration_direction", "relative_hpd_width", directions
+    )
     fig, axes = plt.subplots(1, 2, figsize=(4.5, 4.0), sharey=True)
-    plot_migration_direction_model_boxplots(
+    plot_horizontal_bias_boxplot(
         axes[0],
-        df_plot,
-        "bias",
+        directions,
+        bias_by_dir,
+        color=COLORS[3],
         xlabel="Migration rate\nbias",
-        show_y_ticklabels=True,
-        show_legend=True,
         draw_zero_vline=True,
     )
-    plot_migration_direction_model_boxplots(
+    plot_horizontal_bias_boxplot(
         axes[1],
-        df_plot,
-        "relative_hpd_width",
+        directions,
+        width_by_dir,
+        color=COLORS[3],
         xlabel="Migration rate\nrel. HPD width",
-        show_y_ticklabels=False,
-        show_legend=False,
+        show_ylabels=False,
         draw_zero_vline=False,
     )
     fig.tight_layout()
@@ -592,7 +737,7 @@ def plot_prevalence_true_vs_estimate_scatters(
         sub = df[df["deme_role"] == role_key]
         if sub.empty:
             continue
-        suffix = f"_log" if log_space else ""
+        suffix = "_log" if log_space else ""
         out_png = output_dir / f"{filename_prefix}_{role_key}{suffix}.png"
         fig, ax = plt.subplots(figsize=(2.5, 2.5))
         plot_param_true_vs_estimate(ax, sub, title=title)
@@ -756,6 +901,223 @@ def run_time_series_hpd_validation_figures(
             )
 
 
+PREV_ROLE_PANEL_TITLES: dict[str, str] = {
+    "start": "Start deme",
+    "secondary": "Secondary deme",
+}
+
+
+def _prepare_prevalence_scatter_frame(
+    df_prev: pd.DataFrame,
+    starting_deme_by_sim: dict[str, int],
+    *,
+    log_space: bool = True,
+) -> pd.DataFrame:
+    """Add ``deme_role`` and true/median/HPD columns (on log or natural scale)."""
+    df = add_prevalence_deme_role_column(df_prev, starting_deme_by_sim)
+    df["expectedlogPrev"] = pd.to_numeric(df["expectedlogPrev"], errors="coerce")
+    df = df.dropna(subset=["expectedlogPrev"]).copy()
+    transform = (lambda x: x) if log_space else np.exp
+    df["true_value"] = transform(df["expectedlogPrev"])
+    df["median"] = transform(pd.to_numeric(df["logPrevalence"], errors="coerce"))
+    df["hpd_lower"] = transform(
+        pd.to_numeric(df["logPrevalence_hpd_lower"], errors="coerce")
+    )
+    df["hpd_upper"] = transform(
+        pd.to_numeric(df["logPrevalence_hpd_upper"], errors="coerce")
+    )
+    df["series_label"] = ""
+    return df
+
+
+def plot_final_figure(
+    df_params: pd.DataFrame,
+    df_mig: pd.DataFrame,
+    df_prev: pd.DataFrame,
+    trajectory_meta: dict[str, tuple[int, float, float]],
+    output_png: Path,
+    *,
+    df_ne_reference: pd.DataFrame | None = None,
+) -> None:
+    """
+    Assemble the combined summary figure via ``GridSpec``.
+
+    Layout (7 logical columns × 4 rows, expanded to 14 sub-columns so that the
+    1.5-wide prevalence panels fit cleanly):
+
+    * rows 0-1, cols 0-5 (user cols 1-3): empty placeholder for an external graphic
+    * rows 0-1, cols 6-9 (user cols 4-5): 2×2 parameter scatter plots
+      (CC scaling, CC dispersion on top; WW scaling, WW sigma on bottom)
+    * rows 0-1, cols 10-11 (user col 6): parameter coverage (horizontal bars)
+    * rows 0-1, cols 12-13 (user col 7): parameter bias (horizontal boxplot,
+      shares y with coverage)
+    * rows 2-3, cols 0-1 (user col 1): prevalence true-vs-estimate scatter
+      (start on top, secondary on bottom)
+    * rows 2-3, cols 2-4 (user cols 2 to 3.5, 1.5 wide): prevalence coverage
+      over time (start on top, secondary on bottom)
+    * rows 2-3, cols 5-7 (user cols 3.5 to 5, 1.5 wide): prevalence relative
+      bias over time
+    * rows 2-3, cols 8-9 (user col 5): migration scatter (start→secondary on
+      top, secondary→start on bottom)
+    * rows 2-3, cols 10-11 (user col 6): migration coverage (horizontal bars)
+    * rows 2-3, cols 12-13 (user col 7): migration bias (horizontal boxplot,
+      shares y with coverage)
+
+    ``df_params`` must already have ``group_id`` / ``series_label`` columns from
+    :func:`add_group_columns`.
+    """
+    configure_pdf_fonts()
+    output_png = Path(output_png)
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    starting_deme_by_sim = {s: m[0] for s, m in trajectory_meta.items()}
+
+    # --- parameters: bias per row (median - true) ------------------------
+    df_params = df_params.copy()
+    df_params["bias"] = df_params["median"] - df_params["true_value"]
+
+    # --- migration: restrict to MASCOT-DS and derive bias ---------------
+    mig_enriched = add_migration_direction_column(df_mig, starting_deme_by_sim)
+    mig_enriched = mig_enriched[mig_enriched["Model"] == MODEL_MASCOT_DS].copy()
+    mig_enriched["bias"] = mig_enriched["median"] - mig_enriched["true_value"]
+
+    # --- prevalence: time-series aggregates and scatter frame ------------
+    df_prev_prep = prepare_validation_timeseries_df(
+        df_prev,
+        trajectory_meta,
+        starting_deme_by_sim,
+        ne_reference_df=df_ne_reference,
+    )
+    prev_coverage_agg = (
+        df_prev_prep.groupby(["time_index", "deme_role"], sort=True)
+        .agg(coverage=("inHPD", "mean"))
+        .reset_index()
+    )
+    df_prev_metrics = add_prevalence_bias_and_hpd_width_real_space(df_prev_prep)
+    prev_rel_bias_agg = median_quantile_metric_by_time_index_role(
+        df_prev_metrics, "bias_prev_real_rel"
+    )
+    prev_scatter_frame = _prepare_prevalence_scatter_frame(
+        df_prev, starting_deme_by_sim, log_space=True
+    )
+
+    # --- figure & gridspec ----------------------------------------------
+    fig = plt.figure(figsize=(17, 9))
+    gs = fig.add_gridspec(nrows=4, ncols=14, hspace=0.75, wspace=1.4)
+
+    # Placeholder for external graphic (top-left)
+    ax_placeholder = fig.add_subplot(gs[0:2, 0:6])
+    ax_placeholder.set_axis_off()
+
+    # --- parameter scatter plots (2×2) ----------------------------------
+    param_cells = {
+        "caseCounts.scaling": (0, slice(6, 8)),
+        "caseCounts.dispersion": (0, slice(8, 10)),
+        "wastewater.scaling": (1, slice(6, 8)),
+        "wastewater.sigma": (1, slice(8, 10)),
+    }
+    for gid, (r, cslice) in param_cells.items():
+        ax = fig.add_subplot(gs[r, cslice])
+        sub = df_params[df_params["group_id"] == gid].copy()
+        if gid in COLLAPSE_SERIES_GROUPS:
+            sub["series_label"] = ""
+        plot_param_true_vs_estimate(
+            ax,
+            sub,
+            title=PARAM_GROUP_TITLES.get(gid, gid),
+            show_legend=False,
+        )
+
+    # --- parameter coverage (horizontal) -------------------------------
+    param_groups = list(PARAM_GROUP_ORDER)
+    param_labels = [PARAM_GROUP_TITLES[g] for g in param_groups]
+    ax_p_cov = fig.add_subplot(gs[0:2, 10:12])
+    plot_horizontal_coverage_barplot(
+        ax_p_cov,
+        param_labels,
+        coverage_percent_by_group(df_params, "group_id", param_groups),
+        xlabel="Coverage (%)",
+    )
+
+    # --- parameter bias (horizontal boxplot, shares y with coverage) ---
+    ax_p_bias = fig.add_subplot(gs[0:2, 12:14], sharey=ax_p_cov)
+    plot_horizontal_bias_boxplot(
+        ax_p_bias,
+        param_labels,
+        {
+            lbl: df_params[df_params["group_id"] == gid]["bias"]
+            .dropna()
+            .to_numpy(dtype=float)
+            for gid, lbl in zip(param_groups, param_labels)
+        },
+        xlabel="Bias",
+        show_ylabels=False,
+    )
+
+    # --- prevalence scatter (start / secondary) -------------------------
+    for row_offset, role_key in enumerate(("start", "secondary")):
+        ax = fig.add_subplot(gs[2 + row_offset, 0:2])
+        sub = prev_scatter_frame[prev_scatter_frame["deme_role"] == role_key]
+        plot_param_true_vs_estimate(
+            ax,
+            sub,
+            title=f"log Prevalence — {PREV_ROLE_PANEL_TITLES[role_key]}",
+        )
+
+    # --- prevalence coverage over time ---------------------------------
+    for row_offset, role_key in enumerate(("start", "secondary")):
+        ax = fig.add_subplot(gs[2 + row_offset, 2:5])
+        plot_time_series_coverage_on_axis(
+            ax,
+            prev_coverage_agg,
+            role_key,
+            title=PREV_ROLE_PANEL_TITLES[role_key],
+            show_xlabel=(role_key == "secondary"),
+        )
+
+    # --- prevalence relative bias over time ----------------------------
+    for row_offset, role_key in enumerate(("start", "secondary")):
+        ax = fig.add_subplot(gs[2 + row_offset, 5:8])
+        plot_time_series_metric_on_axis(
+            ax,
+            prev_rel_bias_agg,
+            role_key,
+            ylabel="Relative bias",
+            title=PREV_ROLE_PANEL_TITLES[role_key],
+            show_xlabel=(role_key == "secondary"),
+            draw_zero_line=True,
+        )
+
+    # --- migration scatter (per direction) -----------------------------
+    for row_offset, direction in enumerate(MIGRATION_DIRECTION_LABELS):
+        ax = fig.add_subplot(gs[2 + row_offset, 8:10])
+        sub = mig_enriched[mig_enriched["migration_direction"] == direction].copy()
+        sub["series_label"] = ""
+        plot_param_true_vs_estimate(ax, sub, title=direction)
+
+    # --- migration coverage (horizontal) -------------------------------
+    mig_dirs = list(MIGRATION_DIRECTION_LABELS)
+    ax_m_cov = fig.add_subplot(gs[2:4, 10:12])
+    plot_horizontal_coverage_barplot(
+        ax_m_cov,
+        mig_dirs,
+        coverage_percent_by_group(mig_enriched, "migration_direction", mig_dirs),
+        xlabel="Coverage (%)",
+    )
+
+    # --- migration bias (horizontal boxplot, shares y with coverage) ---
+    ax_m_bias = fig.add_subplot(gs[2:4, 12:14], sharey=ax_m_cov)
+    plot_horizontal_bias_boxplot(
+        ax_m_bias,
+        mig_dirs,
+        values_by_group(mig_enriched, "migration_direction", "bias", mig_dirs),
+        xlabel="Bias",
+        show_ylabels=False,
+    )
+
+    save_figure_png_and_pdf(output_png)
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="True vs estimated parameter figures with HPD error bars."
@@ -822,6 +1184,14 @@ def main() -> None:
             "Requires --sim_metadata_csv when this file exists."
         ),
     )
+    parser.add_argument(
+        "--final_figure_out",
+        type=Path,
+        default=None,
+        help="Output PNG path for the combined summary figure (default: "
+        "output_dir/final_figure.png). Written only when params, migration, and "
+        "prevalence data are all available.",
+    )
     args = parser.parse_args()
 
     df = pd.read_csv(args.csv)
@@ -841,22 +1211,13 @@ def main() -> None:
     df = add_group_columns(df)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    title_map = {
-        "caseCounts.scaling": "CC scaling",
-        "caseCounts.dispersion": "CC dispersion",
-        "wastewater.scaling": "WW scaling",
-        "wastewater.sigma": "WW sigma",
-        # "seroprevalence.scaling": "SP scaling",  # fixed to 1.0; not estimated
-    }
-
     coverage: list[tuple[str, float]] = []
     for group_id, g in df.groupby("group_id", sort=True):
-        
         stem = group_id_to_filename_stem(group_id)
         out_png = args.output_dir / f"{stem}.png"
         fig, ax = plt.subplots(figsize=(2.5, 2.5))
         plot_param_true_vs_estimate(
-            ax, g, title=title_map.get(group_id, group_id)
+            ax, g, title=PARAM_GROUP_TITLES.get(group_id, group_id)
         )
         fig.tight_layout()
         save_figure_png_and_pdf(out_png)
@@ -866,7 +1227,7 @@ def main() -> None:
     gids = [c[0] for c in coverage]
     pcts = [c[1] for c in coverage]
     fig_bar, ax_bar = plt.subplots(figsize=(4.0, 2.8))
-    plot_hpd_coverage_barplot(ax_bar, gids, pcts, title_map)
+    plot_hpd_coverage_barplot(ax_bar, gids, pcts, PARAM_GROUP_TITLES)
     fig_bar.tight_layout()
     save_figure_png_and_pdf(args.output_dir / "ds_param_coverage.png")
     plt.close(fig_bar)
@@ -983,6 +1344,25 @@ def main() -> None:
             df_prev=df_prev,
             trajectory_meta=trajectory_meta,
             output_dir=args.output_dir,
+        )
+
+    if (
+        df_mig is not None
+        and df_prev is not None
+        and trajectory_meta is not None
+    ):
+        final_out = (
+            args.final_figure_out
+            if args.final_figure_out is not None
+            else args.output_dir / "final_figure.png"
+        )
+        plot_final_figure(
+            df_params=df,
+            df_mig=df_mig,
+            df_prev=df_prev,
+            trajectory_meta=trajectory_meta,
+            output_png=final_out,
+            df_ne_reference=df_ne_reference,
         )
 
 
