@@ -571,7 +571,9 @@ def load_params_csv(file_path: str) -> pd.DataFrame:
         df = pd.read_csv(file_path)
         required_cols = {"parameter", "deme", "value"}
         if not required_cols.issubset(set(df.columns)):
-            logger.error("Params CSV missing required columns %s: %s", required_cols, file_path)
+            logger.error(
+                "Params CSV missing required columns %s: %s", required_cols, file_path
+            )
             return pd.DataFrame()
         df["Deme"] = df["deme"]
         return df
@@ -609,7 +611,9 @@ def compute_expected_ne_from_trajectory(
     ].copy()
 
     if beta_rows.empty:
-        logger.warning("No beta entries found in params CSV; cannot compute expected Ne.")
+        logger.warning(
+            "No beta entries found in params CSV; cannot compute expected Ne."
+        )
         return pd.DataFrame()
 
     # Parse time from parameter names and extract within-deme betas
@@ -1834,14 +1838,18 @@ def _plot_prevalence_panel(
                 ax3 = ax.twinx()
                 ax3.set_zorder(2)
                 ax3.patch.set_visible(False)
-                if fig is not None:
-                    # Offset the second twin spine by a fraction of the *actual*
-                    # subplot width (not the whole figure), so the wastewater axis
-                    # sits just outside the case-counts axis regardless of how
-                    # the figure is laid out.
-                    ax_width_inches = ax.get_position().width * fig.get_figwidth()
-                    offset_points = ax_width_inches * 8
-                    ax3.spines["right"].set_position(("outward", offset_points))
+                # Outward offset must clear ax2's tick labels + rotated y-axis
+                # label. That space depends on font sizes, not the subplot width:
+                #   ~3 char widths of tick labels (char ≈ 0.55 * fontsize pt)
+                # + labelpad between ticks and axis label
+                # + font height of the rotated axis label (~ 1.1 * fontsize pt)
+                # + small buffer so the two labels don't crowd.
+                label_fontsize = fontsizes[1]
+                labelpad_est = max(6.0, label_fontsize)
+                offset_points = (
+                    3.0 * fontsize_tick + labelpad_est + label_fontsize * 1.2 + 10.0
+                )
+                ax3.spines["right"].set_position(("outward", offset_points))
             else:
                 ax3 = ax.twinx()
                 ax3.set_zorder(1)
@@ -2747,7 +2755,9 @@ def interpolate_expected_ne_at_times(
     ].copy()
 
     if beta_rows.empty:
-        logger.warning("No beta entries found in params CSV; cannot compute expected Ne.")
+        logger.warning(
+            "No beta entries found in params CSV; cannot compute expected Ne."
+        )
         return pd.DataFrame()
 
     # Parse time from parameter names and extract within-deme betas
@@ -3015,7 +3025,9 @@ def validate_hpd_intervals(
         validation_output = f"{out_prefix}_hpd_validation_prevalence.csv"
         hpd_validation_df["Simulation"] = basename
         hpd_validation_df.to_csv(validation_output, index=False)
-        logger.info("HPD validation results (prevalence) saved to %s", validation_output)
+        logger.info(
+            "HPD validation results (prevalence) saved to %s", validation_output
+        )
 
         # Print summary statistics
         if "inHPD" in hpd_validation_df.columns:
@@ -3023,7 +3035,10 @@ def validate_hpd_intervals(
             in_hpd_count = hpd_validation_df["inHPD"].sum()
             coverage = (in_hpd_count / total_points) * 100 if total_points > 0 else 0
             logger.info(
-                "HPD coverage (prevalence): %d/%d (%.2f%%)", in_hpd_count, total_points, coverage
+                "HPD coverage (prevalence): %d/%d (%.2f%%)",
+                in_hpd_count,
+                total_points,
+                coverage,
             )
 
         if "inHPDP1" in hpd_validation_df.columns:
@@ -3031,7 +3046,10 @@ def validate_hpd_intervals(
             in_hpd_count = hpd_validation_df["inHPDP1"].sum()
             coverage = (in_hpd_count / total_points) * 100 if total_points > 0 else 0
             logger.info(
-                "HPD coverage with +1 counts (prevalence): %d/%d (%.2f%%)", in_hpd_count, total_points, coverage
+                "HPD coverage with +1 counts (prevalence): %d/%d (%.2f%%)",
+                in_hpd_count,
+                total_points,
+                coverage,
             )
 
         return hpd_validation_df
@@ -3130,7 +3148,12 @@ def validate_hpd_intervals(
             total_points = len(hpd_validation_df)
             in_hpd_count = hpd_validation_df["inHPD"].sum()
             coverage = (in_hpd_count / total_points) * 100 if total_points > 0 else 0
-            logger.info("HPD coverage (Ne): %d/%d (%.2f%%)", in_hpd_count, total_points, coverage)
+            logger.info(
+                "HPD coverage (Ne): %d/%d (%.2f%%)",
+                in_hpd_count,
+                total_points,
+                coverage,
+            )
 
         return hpd_validation_df
 
@@ -3227,14 +3250,20 @@ def validate_hpd_intervals(
         validation_output = f"{out_prefix}_hpd_validation_cumulative_incidence.csv"
         hpd_validation_df["Simulation"] = basename
         hpd_validation_df.to_csv(validation_output, index=False)
-        logger.info("HPD validation results (cumulative incidence) saved to %s", validation_output)
+        logger.info(
+            "HPD validation results (cumulative incidence) saved to %s",
+            validation_output,
+        )
 
         if "inHPD" in hpd_validation_df.columns:
             total_points = len(hpd_validation_df)
             in_hpd_count = hpd_validation_df["inHPD"].sum()
             coverage = (in_hpd_count / total_points) * 100 if total_points > 0 else 0
             logger.info(
-                "HPD coverage (cumulative incidence): %d/%d (%.2f%%)", in_hpd_count, total_points, coverage
+                "HPD coverage (cumulative incidence): %d/%d (%.2f%%)",
+                in_hpd_count,
+                total_points,
+                coverage,
             )
 
         return hpd_validation_df
@@ -3296,7 +3325,6 @@ def get_deme_popsize(df: pd.DataFrame) -> dict:
         result[key] = float(v)
 
     return result
-
 
 
 def get_deme_display_label(deme: int, starting_deme: int) -> str:
@@ -3496,7 +3524,9 @@ def _compute_hpd_intervals(args, logs, datastream_files):
     hpd_intervals_datastream = None
     has_nedynamics = args.nedynamics_deme1 or args.nedynamics_deme2
     if has_nedynamics:
-        logger.info("Using NeDynamics log files for datastreams - skipping interpolation")
+        logger.info(
+            "Using NeDynamics log files for datastreams - skipping interpolation"
+        )
         nedynamics_list = []
         for deme_file, deme_idx in [
             (args.nedynamics_deme1, 0),
@@ -3678,7 +3708,10 @@ def main():
             args.out_prefix,
         )
 
-    if not data["log_content_original"].empty and not data["log_content_datastream"].empty:
+    if (
+        not data["log_content_original"].empty
+        and not data["log_content_datastream"].empty
+    ):
         save_migration_rates_hpd_csv(
             data["log_content_original"],
             data["log_content_datastream"],
