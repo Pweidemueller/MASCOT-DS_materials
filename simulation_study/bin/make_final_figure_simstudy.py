@@ -717,15 +717,19 @@ def plot_param_true_vs_estimate(
             )
         ),
     ]
+    lims_x = [subdf["true_value"].to_numpy(dtype=float).min(), subdf["true_value"].to_numpy(dtype=float).max()]
+    lims_y = [subdf["median"].to_numpy(dtype=float).min(), subdf["median"].to_numpy(dtype=float).max()]
     if not np.all(np.isfinite(lims)):
         return
     pad = 0.05 * (lims[1] - lims[0]) if lims[1] > lims[0] else 1.0
     lo_lim = lims[0] - pad
     hi_lim = lims[1] + pad
-    ax.plot([lo_lim, hi_lim], [lo_lim, hi_lim], color="0.5", lw=0.8, ls="--", zorder=0)
-    ax.set_xlim(lo_lim, hi_lim)
-    ax.set_ylim(lo_lim, hi_lim)
-    ax.set_aspect("equal", adjustable="box")
+    ax.plot([lims_x[0], lims_x[1]], [lims_x[0], lims_x[1]], color="0.5", lw=0.8, ls="--", zorder=0)
+
+    # ax.plot([lo_lim, hi_lim], [lo_lim, hi_lim], color="0.5", lw=0.8, ls="--", zorder=0)
+    # ax.set_xlim(lo_lim, hi_lim)
+    # ax.set_ylim(lo_lim, hi_lim)
+    # ax.set_aspect("equal", adjustable="box")
 
     ax.set_title(title, fontsize=FONTSIZES_LIST[0])
     set_axis_fontsizes(
@@ -1195,13 +1199,15 @@ def plot_final_figure(
     mig_dirs = list(MIGRATION_DIRECTION_LABELS)
     mig_axis_labels = [MIGRATION_DIRECTION_AXIS_LABELS[d] for d in mig_dirs]
     ax_m_cov = fig.add_subplot(gs[4, 2:4])
+    mig_enriched_coverage = coverage_percent_by_group(mig_enriched, "migration_direction", mig_dirs)
     plot_vertical_coverage_barplot(
         ax_m_cov,
         mig_axis_labels,
-        coverage_percent_by_group(mig_enriched, "migration_direction", mig_dirs),
+        mig_enriched_coverage,
         ylabel="Coverage (%)",
         show_xlabels=False,
     )
+    save_plot_data_csv(mig_enriched_coverage, output_png, suffix="migration_rates_coverage")
     ax_m_bias = fig.add_subplot(gs[5, 2:4], sharex=ax_m_cov)
     rel_bias_by_dir = values_by_group(
         mig_enriched, "migration_direction", "rel_bias", mig_dirs
@@ -1675,13 +1681,13 @@ def main() -> None:
 
     if df_prev is not None and trajectory_meta is not None:
         prev_cov_png = args.output_dir / "prevalence_coverage_over_time.png"
-        plot_prevalence_coverage_over_time(
+        prev_cov_data = plot_prevalence_coverage_over_time(
             df_prev,
             prev_cov_png,
             trajectory_meta,
             ne_reference_df=df_ne_reference,
         )
-        save_plot_data_csv(df_prev, prev_cov_png)
+        save_plot_data_csv(prev_cov_data, prev_cov_png)
         plot_prevalence_true_vs_estimate_scatters(
             df_prev,
             args.output_dir,

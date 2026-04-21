@@ -503,6 +503,7 @@ def plot_prevalence_coverage_over_time(
     fig.tight_layout()
     save_figure_png_and_pdf(output_png)
     plt.close(fig)
+    return agg
 
 
 def plot_ne_coverage_over_time(
