@@ -1701,7 +1701,7 @@ def main() -> None:
             else args.output_dir / "final_figure.png"
         )
         example_sim_data = _load_example_sim_data(
-            args, out_prefix=args.output_dir + "/individual_sim"
+            args, out_prefix=args.output_dir / "individual_sim"
         )
         plot_final_figure(
             df_params=df,
