@@ -44,6 +44,7 @@ from plot_utils import (
     FONTSIZES_LIST,
     configure_pdf_fonts,
     save_figure_png_and_pdf,
+    save_plot_data_csv,
 )
 from plot_utils import set_axis_fontsizes
 from hpd_validation_timeseries import (
@@ -60,6 +61,12 @@ from hpd_validation_timeseries import (
     plot_two_panel_metric_single_series,
     prepare_validation_timeseries_df,
 )
+from analyse_posteriors import (
+    _plot_prevalence_panel,
+    _plot_cumincidence_panel,
+    prepare_skyline_plot_data,
+)
+from plot_utils import DEFAULT_FONTSIZES
 
 MIGRATION_PARAM_SUFFIX = re.compile(r"\.I(\d+)_to_I(\d+)$")
 
@@ -230,6 +237,82 @@ def plot_horizontal_bias_boxplot(
         ax.tick_params(axis="y", labelleft=False)
     ax.invert_yaxis()
     ax.set_xlabel(xlabel, fontsize=FONTSIZES_LIST[1])
+    ax.tick_params(labelsize=FONTSIZES_LIST[2])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def plot_vertical_coverage_barplot(
+    ax,
+    labels: list[str],
+    coverages: list[float],
+    *,
+    color: str = COLORS[3],
+    ylabel: str = "Coverage (%)",
+    show_xlabels: bool = True,
+    ylim: tuple[float, float] = (0.0, 100.0),
+) -> None:
+    """Vertical bars with categorical x; intended to stack over a bias boxplot (shared x)."""
+    configure_pdf_fonts()
+    x = np.arange(len(labels), dtype=float)
+    ax.bar(x, coverages, color=color, edgecolor="white", linewidth=0.6, zorder=2)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    if not show_xlabels:
+        ax.tick_params(axis="x", labelbottom=False)
+    ax.set_ylim(*ylim)
+    ax.set_ylabel(ylabel, fontsize=FONTSIZES_LIST[1])
+    ax.tick_params(labelsize=FONTSIZES_LIST[2])
+    ax.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.6, zorder=0)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def plot_vertical_bias_boxplot(
+    ax,
+    labels: list[str],
+    values_by_label: dict[str, np.ndarray],
+    *,
+    color: str = COLORS[3],
+    ylabel: str = "Bias",
+    show_xlabels: bool = True,
+    draw_zero_hline: bool = True,
+    box_width: float = 0.5,
+) -> None:
+    """Vertical boxplots (one per categorical x); intended to share x with a coverage bar above."""
+    configure_pdf_fonts()
+    x = np.arange(len(labels), dtype=float)
+    data_list = [
+        values_by_label[lbl] if values_by_label[lbl].size > 0 else np.array([np.nan])
+        for lbl in labels
+    ]
+    bp = ax.boxplot(
+        data_list,
+        positions=x,
+        vert=True,
+        patch_artist=True,
+        widths=box_width,
+        showfliers=True,
+        whis=1.5,
+    )
+    for patch in bp["boxes"]:
+        patch.set_facecolor(color)
+        patch.set_edgecolor("0.25")
+        patch.set_linewidth(0.6)
+    for el in bp["medians"]:
+        el.set_color("0.15")
+        el.set_linewidth(0.9)
+    for el in bp["whiskers"] + bp["caps"]:
+        el.set_color("0.35")
+        el.set_linewidth(0.6)
+    if draw_zero_hline:
+        ax.axhline(0.0, color="0.75", lw=0.7, ls="--", zorder=0)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    if not show_xlabels:
+        ax.tick_params(axis="x", labelbottom=False)
+    ax.set_ylabel(ylabel, fontsize=FONTSIZES_LIST[1])
     ax.tick_params(labelsize=FONTSIZES_LIST[2])
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -464,6 +547,7 @@ def plot_migration_bias_uncertainty_figure(
     )
     fig.tight_layout()
     save_figure_png_and_pdf(output_png)
+    save_plot_data_csv(df_plot, output_png)
     plt.close(fig)
 
 
@@ -711,6 +795,7 @@ def plot_migration_true_vs_estimate_scatters(
         )
         fig.tight_layout()
         save_figure_png_and_pdf(out_png)
+        save_plot_data_csv(sub, out_png)
         plt.close(fig)
 
 
@@ -780,6 +865,7 @@ def plot_prevalence_true_vs_estimate_scatters(
         plot_param_true_vs_estimate(ax, sub, title=title)
         fig.tight_layout()
         save_figure_png_and_pdf(out_png)
+        save_plot_data_csv(sub, out_png)
         plt.close(fig)
 
 
@@ -845,12 +931,14 @@ def run_time_series_hpd_validation_figures(
         assert_matching_secondary_min_time_index(df_prev_prepared, df_ne_prepared)
 
     if df_ne_raw is not None and df_ne_prepared is not None:
+        ne_cov_png = output_dir / "ne_coverage_over_time.png"
         plot_ne_coverage_over_time(
             df_ne_raw,
-            output_dir / "ne_coverage_over_time.png",
+            ne_cov_png,
             trajectory_meta,
             models_colors=MODEL_COLORS_DEFAULT,
         )
+        save_plot_data_csv(df_ne_prepared, ne_cov_png)
         df_ne_prepared = add_bias_and_hpd_width_columns(
             df_ne_prepared,
             expected_col="expectedlogNe",
@@ -863,23 +951,27 @@ def run_time_series_hpd_validation_figures(
         df_ne_prepared.to_csv(
             output_dir / "ne_summary_logne_over_time.csv", index=False
         )
+        ne_bias_png = output_dir / "ne_bias_logne_over_time.png"
         plot_two_panel_metric_multi_model(
             agg_ne_bias,
-            output_dir / "ne_bias_logne_over_time.png",
+            ne_bias_png,
             ylabel="Bias (log Ne)",
             models_colors=MODEL_COLORS_DEFAULT,
             draw_zero_line=True,
         )
+        save_plot_data_csv(agg_ne_bias, ne_bias_png)
         agg_ne_hpd_width = median_quantile_metric_by_time_index_role_model(
             df_ne_prepared, "hpd_width_logne"
         )
+        ne_width_png = output_dir / "ne_hpd_width_logne_over_time.png"
         plot_two_panel_metric_multi_model(
             agg_ne_hpd_width,
-            output_dir / "ne_hpd_width_logne_over_time.png",
+            ne_width_png,
             ylabel="HPD width (log Ne)",
             models_colors=MODEL_COLORS_DEFAULT,
             draw_zero_line=False,
         )
+        save_plot_data_csv(agg_ne_hpd_width, ne_width_png)
 
     if df_prev is not None:
         prev_bias_need = [
@@ -907,33 +999,39 @@ def run_time_series_hpd_validation_figures(
             agg_p_bias = median_quantile_metric_by_time_index_role(
                 df_prev_prepared_bias, "bias_prev_real"
             )
+            prev_bias_png = output_dir / "prevalence_bias_prev_over_time.png"
             plot_two_panel_metric_single_series(
                 agg_p_bias,
-                output_dir / "prevalence_bias_prev_over_time.png",
+                prev_bias_png,
                 ylabel="Bias of\nprevalence estimate",
                 color=COLORS[3],
                 draw_zero_line=True,
             )
+            save_plot_data_csv(agg_p_bias, prev_bias_png)
             agg_p_rel = median_quantile_metric_by_time_index_role(
                 df_prev_prepared_bias, "rel_hpd_width_prev_real"
             )
+            prev_rel_png = output_dir / "prevalence_rel_hpd_width_prev_over_time.png"
             plot_two_panel_metric_single_series(
                 agg_p_rel,
-                output_dir / "prevalence_rel_hpd_width_prev_over_time.png",
+                prev_rel_png,
                 ylabel="Relative HPD width of\nprevalence estimate",
                 color=COLORS[3],
                 draw_zero_line=False,
             )
+            save_plot_data_csv(agg_p_rel, prev_rel_png)
             agg_p_bias_rel = median_quantile_metric_by_time_index_role(
                 df_prev_prepared_bias, "bias_prev_real_rel"
             )
+            prev_bias_rel_png = output_dir / "prevalence_bias_prev_rel_over_time.png"
             plot_two_panel_metric_single_series(
                 agg_p_bias_rel,
-                output_dir / "prevalence_bias_prev_rel_over_time.png",
+                prev_bias_rel_png,
                 ylabel="Relative bias of\nprevalence estimate",
                 color=COLORS[3],
                 draw_zero_line=True,
             )
+            save_plot_data_csv(agg_p_bias_rel, prev_bias_rel_png)
 
 
 PREV_ROLE_PANEL_TITLES: dict[str, str] = {
@@ -973,33 +1071,32 @@ def plot_final_figure(
     output_png: Path,
     *,
     df_ne_reference: pd.DataFrame | None = None,
+    example_sim_data: dict | None = None,
 ) -> None:
     """
-    Assemble the combined summary figure via ``GridSpec``.
+    Assemble the combined summary figure via ``GridSpec`` (14×11 in, 6×11 grid).
 
-    Layout (7 logical columns × 4 rows, expanded to 14 sub-columns so that the
-    1.5-wide prevalence panels fit cleanly):
+    Layout (rows × cols, 0-indexed):
 
-    * rows 0-1, cols 0-5 (user cols 1-3): empty placeholder for an external graphic
-    * rows 0-1, cols 6-9 (user cols 4-5): 2×2 parameter scatter plots
-      (CC scaling, CC dispersion on top; WW scaling, WW sigma on bottom)
-    * rows 0-1, cols 10-11 (user col 6): parameter coverage (horizontal bars)
-    * rows 0-1, cols 12-13 (user col 7): parameter bias (horizontal boxplot,
-      shares y with coverage)
-    * rows 2-3, cols 0-1 (user col 1): prevalence true-vs-estimate scatter
-      (start on top, secondary on bottom)
-    * rows 2-3, cols 2-4 (user cols 2 to 3.5, 1.5 wide): prevalence coverage
-      over time (start on top, secondary on bottom)
-    * rows 2-3, cols 5-7 (user cols 3.5 to 5, 1.5 wide): prevalence relative
-      bias over time
-    * rows 2-3, cols 8-9 (user col 5): migration scatter (start→secondary on
-      top, secondary→start on bottom)
-    * rows 2-3, cols 10-11 (user col 6): migration coverage (horizontal bars)
-    * rows 2-3, cols 12-13 (user col 7): migration bias (horizontal boxplot,
-      shares y with coverage)
+    * rows 0-1, cols 0-4: placeholder for an external graphic (axis off)
+    * row 0 cols 5-7 / row 1 cols 5-7: start deme prevalence / cumulative incidence
+      (from ``example_sim_data``, if provided; axis off otherwise)
+    * row 0 cols 8-10 / row 1 cols 8-10: secondary deme prevalence / cumulative
+      incidence (as above)
+    * rows 2-3, cols 0-1: prevalence scatter (start on top, secondary on bottom)
+    * rows 2-3, cols 2-5: prevalence coverage over time (start / secondary)
+    * rows 2-3, cols 6-9: prevalence relative bias over time (start / secondary)
+    * rows 4-5, cols 0-1: migration scatter (start→secondary / secondary→start)
+    * row 4 cols 2-3 (coverage, no x-tick labels) and row 5 cols 2-3 (bias,
+      x-tick labels): migration vertical coverage + bias with shared x
+    * rows 4-5, cols 4-7: 2×2 parameter scatter plots
+    * row 4 cols 8-10 (coverage) / row 5 cols 8-10 (bias): parameter vertical
+      coverage + bias with shared x
 
     ``df_params`` must already have ``group_id`` / ``series_label`` columns from
-    :func:`add_group_columns`.
+    :func:`add_group_columns`. Pass ``example_sim_data`` from
+    :func:`analyse_posteriors.prepare_skyline_plot_data` to populate the per-sim
+    panels; when ``None`` those cells are left blank.
     """
     configure_pdf_fonts()
     output_png = Path(output_png)
@@ -1040,19 +1137,89 @@ def plot_final_figure(
     )
 
     # --- figure & gridspec ----------------------------------------------
-    fig = plt.figure(figsize=(17, 9))
-    gs = fig.add_gridspec(nrows=4, ncols=14, hspace=0.75, wspace=0.7)
+    fig = plt.figure(figsize=(14, 11))
+    gs = fig.add_gridspec(nrows=6, ncols=11, hspace=0.9, wspace=0.9)
 
-    # Placeholder for external graphic (top-left)
-    ax_placeholder = fig.add_subplot(gs[0:2, 0:6])
+    # --- Placeholder for external graphic (rows 0-1, cols 0-4) -----------
+    ax_placeholder = fig.add_subplot(gs[0:2, 0:5])
     ax_placeholder.set_axis_off()
 
-    # --- parameter scatter plots (2×2) ----------------------------------
+    # --- Per-simulation panels (rows 0-1, cols 5-10) --------------------
+    _place_example_sim_panels(fig, gs, example_sim_data)
+
+    # --- prevalence scatter (rows 2-3, cols 0-1) ------------------------
+    for row_offset, role_key in enumerate(("start", "secondary")):
+        ax = fig.add_subplot(gs[2 + row_offset, 0:2])
+        sub = prev_scatter_frame[prev_scatter_frame["deme_role"] == role_key]
+        plot_param_true_vs_estimate(
+            ax,
+            sub,
+            title=PREV_ROLE_PANEL_TITLES[role_key],
+        )
+
+    # --- prevalence coverage over time (rows 2-3, cols 2-5) -------------
+    for row_offset, role_key in enumerate(("start", "secondary")):
+        ax = fig.add_subplot(gs[2 + row_offset, 2:6])
+        plot_time_series_coverage_on_axis(
+            ax,
+            prev_coverage_agg,
+            role_key,
+            title=PREV_ROLE_PANEL_TITLES[role_key],
+            show_xlabel=(role_key == "secondary"),
+        )
+
+    # --- prevalence relative bias over time (rows 2-3, cols 6-9) --------
+    for row_offset, role_key in enumerate(("start", "secondary")):
+        ax = fig.add_subplot(gs[2 + row_offset, 6:10])
+        plot_time_series_metric_on_axis(
+            ax,
+            prev_rel_bias_agg,
+            role_key,
+            ylabel="Relative bias",
+            title=PREV_ROLE_PANEL_TITLES[role_key],
+            show_xlabel=(role_key == "secondary"),
+            draw_zero_line=True,
+        )
+
+    # --- migration scatter (rows 4-5, cols 0-1) -------------------------
+    for row_offset, direction in enumerate(MIGRATION_DIRECTION_LABELS):
+        ax = fig.add_subplot(gs[4 + row_offset, 0:2])
+        sub = mig_enriched[mig_enriched["migration_direction"] == direction].copy()
+        sub["series_label"] = ""
+        plot_param_true_vs_estimate(
+            ax, sub, title=MIGRATION_DIRECTION_TITLES[direction]
+        )
+
+    # --- migration vertical coverage (top, row 4) + bias (bottom, row 5)
+    #     at cols 2-3, shared x (bias has x-tick labels) ----------------
+    mig_dirs = list(MIGRATION_DIRECTION_LABELS)
+    mig_axis_labels = [MIGRATION_DIRECTION_AXIS_LABELS[d] for d in mig_dirs]
+    ax_m_cov = fig.add_subplot(gs[4, 2:4])
+    plot_vertical_coverage_barplot(
+        ax_m_cov,
+        mig_axis_labels,
+        coverage_percent_by_group(mig_enriched, "migration_direction", mig_dirs),
+        ylabel="Coverage (%)",
+        show_xlabels=False,
+    )
+    ax_m_bias = fig.add_subplot(gs[5, 2:4], sharex=ax_m_cov)
+    rel_bias_by_dir = values_by_group(
+        mig_enriched, "migration_direction", "rel_bias", mig_dirs
+    )
+    plot_vertical_bias_boxplot(
+        ax_m_bias,
+        mig_axis_labels,
+        {mig_axis_labels[i]: rel_bias_by_dir[d] for i, d in enumerate(mig_dirs)},
+        ylabel="Relative bias",
+        show_xlabels=True,
+    )
+
+    # --- parameter scatter plots (2×2, rows 4-5, cols 4-7) --------------
     param_cells = {
-        "caseCounts.scaling": (0, slice(6, 8)),
-        "caseCounts.dispersion": (0, slice(8, 10)),
-        "wastewater.scaling": (1, slice(6, 8)),
-        "wastewater.sigma": (1, slice(8, 10)),
+        "caseCounts.scaling": (4, slice(4, 6)),
+        "caseCounts.dispersion": (4, slice(6, 8)),
+        "wastewater.scaling": (5, slice(4, 6)),
+        "wastewater.sigma": (5, slice(6, 8)),
     }
     for gid, (r, cslice) in param_cells.items():
         ax = fig.add_subplot(gs[r, cslice])
@@ -1066,20 +1233,19 @@ def plot_final_figure(
             show_legend=False,
         )
 
-    # --- parameter coverage (horizontal) -------------------------------
+    # --- parameter vertical coverage (row 4) + bias (row 5), cols 8-10 --
     param_groups = list(PARAM_GROUP_ORDER)
     param_axis_labels = [PARAM_GROUP_AXIS_LABELS[g] for g in param_groups]
-    ax_p_cov = fig.add_subplot(gs[0:2, 10:12])
-    plot_horizontal_coverage_barplot(
+    ax_p_cov = fig.add_subplot(gs[4, 8:11])
+    plot_vertical_coverage_barplot(
         ax_p_cov,
         param_axis_labels,
         coverage_percent_by_group(df_params, "group_id", param_groups),
-        xlabel="Coverage (%)",
+        ylabel="Coverage (%)",
+        show_xlabels=False,
     )
-
-    # --- parameter relative bias (horizontal boxplot; y-order matches coverage) ---
-    ax_p_bias = fig.add_subplot(gs[0:2, 12:14])
-    plot_horizontal_bias_boxplot(
+    ax_p_bias = fig.add_subplot(gs[5, 8:11], sharex=ax_p_cov)
+    plot_vertical_bias_boxplot(
         ax_p_bias,
         param_axis_labels,
         {
@@ -1088,81 +1254,129 @@ def plot_final_figure(
             .to_numpy(dtype=float)
             for gid, lbl in zip(param_groups, param_axis_labels)
         },
-        xlabel="Relative bias",
-        show_ylabels=False,
+        ylabel="Relative bias",
+        show_xlabels=True,
     )
-    ax_p_bias.set_ylim(ax_p_cov.get_ylim())
-
-    # --- prevalence scatter (start / secondary) -------------------------
-    for row_offset, role_key in enumerate(("start", "secondary")):
-        ax = fig.add_subplot(gs[2 + row_offset, 0:2])
-        sub = prev_scatter_frame[prev_scatter_frame["deme_role"] == role_key]
-        plot_param_true_vs_estimate(
-            ax,
-            sub,
-            title=PREV_ROLE_PANEL_TITLES[role_key],
-        )
-
-    # --- prevalence coverage over time ---------------------------------
-    for row_offset, role_key in enumerate(("start", "secondary")):
-        ax = fig.add_subplot(gs[2 + row_offset, 2:5])
-        plot_time_series_coverage_on_axis(
-            ax,
-            prev_coverage_agg,
-            role_key,
-            title=PREV_ROLE_PANEL_TITLES[role_key],
-            show_xlabel=(role_key == "secondary"),
-        )
-
-    # --- prevalence relative bias over time ----------------------------
-    for row_offset, role_key in enumerate(("start", "secondary")):
-        ax = fig.add_subplot(gs[2 + row_offset, 5:8])
-        plot_time_series_metric_on_axis(
-            ax,
-            prev_rel_bias_agg,
-            role_key,
-            ylabel="Relative bias",
-            title=PREV_ROLE_PANEL_TITLES[role_key],
-            show_xlabel=(role_key == "secondary"),
-            draw_zero_line=True,
-        )
-
-    # --- migration scatter (per direction) -----------------------------
-    for row_offset, direction in enumerate(MIGRATION_DIRECTION_LABELS):
-        ax = fig.add_subplot(gs[2 + row_offset, 8:10])
-        sub = mig_enriched[mig_enriched["migration_direction"] == direction].copy()
-        sub["series_label"] = ""
-        plot_param_true_vs_estimate(
-            ax, sub, title=MIGRATION_DIRECTION_TITLES[direction]
-        )
-
-    # --- migration coverage (horizontal) -------------------------------
-    mig_dirs = list(MIGRATION_DIRECTION_LABELS)
-    mig_axis_labels = [MIGRATION_DIRECTION_AXIS_LABELS[d] for d in mig_dirs]
-    ax_m_cov = fig.add_subplot(gs[2:4, 10:12])
-    plot_horizontal_coverage_barplot(
-        ax_m_cov,
-        mig_axis_labels,
-        coverage_percent_by_group(mig_enriched, "migration_direction", mig_dirs),
-        xlabel="Coverage (%)",
-    )
-
-    # --- migration relative bias (horizontal boxplot; y-order matches coverage) ----
-    ax_m_bias = fig.add_subplot(gs[2:4, 12:14])
-    rel_bias_by_dir = values_by_group(
-        mig_enriched, "migration_direction", "rel_bias", mig_dirs
-    )
-    plot_horizontal_bias_boxplot(
-        ax_m_bias,
-        mig_axis_labels,
-        {mig_axis_labels[i]: rel_bias_by_dir[d] for i, d in enumerate(mig_dirs)},
-        xlabel="Relative bias",
-        show_ylabels=False,
-    )
-    ax_m_bias.set_ylim(ax_m_cov.get_ylim())
 
     save_figure_png_and_pdf(output_png)
+    # Per-panel data CSVs. Different panels have incompatible schemas, so emit
+    # one CSV per logical data slice rather than a single merged file.
+    save_plot_data_csv(df_params, output_png, suffix="params")
+    save_plot_data_csv(mig_enriched, output_png, suffix="migration")
+    save_plot_data_csv(prev_scatter_frame, output_png, suffix="prevalence_scatter")
+    save_plot_data_csv(prev_coverage_agg, output_png, suffix="prevalence_coverage")
+    save_plot_data_csv(prev_rel_bias_agg, output_png, suffix="prevalence_rel_bias")
+    if example_sim_data is not None:
+        hpd_ds = example_sim_data.get("hpd_datastream")
+        if isinstance(hpd_ds, pd.DataFrame) and not hpd_ds.empty:
+            save_plot_data_csv(hpd_ds, output_png, suffix="example_sim_hpd_datastream")
+        cum_hpd = example_sim_data.get("cumulative_incidence_hpd")
+        if isinstance(cum_hpd, pd.DataFrame) and not cum_hpd.empty:
+            save_plot_data_csv(
+                cum_hpd, output_png, suffix="example_sim_cumulative_incidence"
+            )
     plt.close(fig)
+
+
+def _place_example_sim_panels(
+    fig: plt.Figure,
+    gs,
+    example_sim_data: dict | None,
+) -> None:
+    """
+    Draw the per-simulation prevalence + cumulative-incidence panels in rows 0-1,
+    cols 5-10, split by deme (start on cols 5-7, secondary on cols 8-10).
+    Leaves the cells empty (axis off) when ``example_sim_data`` is ``None`` or
+    lacks HPD data.
+    """
+    cell_specs = {
+        "start": (slice(5, 8)),
+        "secondary": (slice(8, 11)),
+    }
+
+    def _blank() -> None:
+        for _, cslice in cell_specs.items():
+            for r in (0, 1):
+                ax = fig.add_subplot(gs[r, cslice])
+                ax.set_axis_off()
+
+    if example_sim_data is None:
+        _blank()
+        return
+
+    hpd_original = example_sim_data.get("hpd_original")
+    if hpd_original is None or hpd_original.empty:
+        _blank()
+        return
+
+    starting_deme = example_sim_data.get("starting_deme")
+    demes = sorted(hpd_original["Deme"].unique())
+    if starting_deme is not None and len(demes) == 2:
+        other = [d for d in demes if int(d) != int(starting_deme)]
+        if len(other) == 1:
+            demes = [int(starting_deme), int(other[0])]
+    role_for_deme = {
+        int(demes[0]): "start",
+        int(demes[1]) if len(demes) > 1 else int(demes[0]): "secondary",
+    }
+
+    hpd_datastream = example_sim_data.get("hpd_datastream")
+    if hpd_datastream is None:
+        hpd_datastream = pd.DataFrame()
+
+    time_factor = 365.0
+    time_label = "days"
+    fontsize_tick = DEFAULT_FONTSIZES["tick_label"]
+    common_kw = {
+        "time_factor": time_factor,
+        "time_label": time_label,
+        "starting_deme": starting_deme,
+        "fontsizes": FONTSIZES_LIST,
+        "fontsize_tick": fontsize_tick,
+    }
+    max_time = example_sim_data.get("max_time")
+
+    for deme in demes:
+        role = role_for_deme[int(deme)]
+        cslice = cell_specs[role]
+
+        ax_prev = fig.add_subplot(gs[0, cslice])
+        _plot_prevalence_panel(
+            ax_prev,
+            deme,
+            hpd_datastream=hpd_datastream,
+            trajectory_data=example_sim_data.get("trajectory_data"),
+            case_counts_data=example_sim_data.get("case_counts_data"),
+            wastewater_data=example_sim_data.get("wastewater_data"),
+            validation_data_datastreams_prevalence=example_sim_data.get(
+                "validation_data_datastreams_prevalence"
+            ),
+            show_logscale=False,
+            show_logscale_prevalence_only=False,
+            case_counts_P1=False,
+            fig=fig,
+            n_demes=1,
+            **common_kw,
+        )
+        if max_time is not None:
+            ax_prev.set_xlim(0, max_time * time_factor)
+
+        ax_cum = fig.add_subplot(gs[1, cslice])
+        _plot_cumincidence_panel(
+            ax_cum,
+            deme,
+            cumulative_incidence_hpd=example_sim_data.get("cumulative_incidence_hpd"),
+            trajectory_data=example_sim_data.get("trajectory_data"),
+            seroprevalence_data=example_sim_data.get("seroprevalence_data"),
+            validation_data_datastreams_cumIncidence=example_sim_data.get(
+                "validation_data_datastreams_cumIncidence"
+            ),
+            deme_popsizes=example_sim_data.get("deme_popsizes"),
+            **common_kw,
+        )
+        ax_cum.set_title(None)
+        if max_time is not None:
+            ax_cum.set_xlim(0, max_time * time_factor)
 
 
 def main() -> None:
@@ -1241,6 +1455,89 @@ def main() -> None:
         "output_dir/final_figure.png). Written only when params, migration, and "
         "prevalence data are all available.",
     )
+
+    # Required inputs for the individual-simulation panels of the final figure.
+    # These mirror analyse_posteriors.parse_arguments so prepare_skyline_plot_data
+    # can be called directly; they are required so the user must pick a specific
+    # example simulation to showcase on the figure.
+    parser.add_argument(
+        "--example_log_file_original",
+        type=str,
+        required=True,
+        help="BEAST2 log file for the MASCOT (original) model of the example simulation.",
+    )
+    parser.add_argument(
+        "--example_log_file_datastream",
+        type=str,
+        required=True,
+        help="BEAST2 log file for the MASCOT-DS (datastream) model of the example simulation.",
+    )
+    parser.add_argument(
+        "--example_trajectory_file",
+        type=str,
+        required=True,
+        help="Trajectory file for the example simulation.",
+    )
+    parser.add_argument(
+        "--example_case_counts_file",
+        type=str,
+        required=True,
+        help="Case counts file for the example simulation.",
+    )
+    parser.add_argument(
+        "--example_seroprevalence_file",
+        type=str,
+        required=True,
+        help="Seroprevalence file for the example simulation.",
+    )
+    parser.add_argument(
+        "--example_wastewater_file",
+        type=str,
+        required=True,
+        help="Wastewater file for the example simulation.",
+    )
+    parser.add_argument(
+        "--example_params_csv",
+        type=str,
+        required=True,
+        help="Parameters CSV exported by create_birthdeath_simXML.py for the example simulation.",
+    )
+    parser.add_argument(
+        "--example_deme_switches_csv",
+        type=str,
+        required=True,
+        help="Deme switches CSV for the example simulation.",
+    )
+    parser.add_argument(
+        "--example_cumulative_incidence_deme1",
+        type=str,
+        required=True,
+        help="Cumulative incidence log file for deme 1 of the example simulation.",
+    )
+    parser.add_argument(
+        "--example_cumulative_incidence_deme2",
+        type=str,
+        required=True,
+        help="Cumulative incidence log file for deme 2 of the example simulation.",
+    )
+    parser.add_argument(
+        "--example_nedynamics_deme1",
+        type=str,
+        required=True,
+        help="NeDynamics log file for deme 1 of the example simulation.",
+    )
+    parser.add_argument(
+        "--example_nedynamics_deme2",
+        type=str,
+        required=True,
+        help="NeDynamics log file for deme 2 of the example simulation.",
+    )
+    parser.add_argument(
+        "--example_burnin",
+        type=float,
+        default=0.1,
+        help="Burn-in fraction applied to the example simulation logs (default: 0.1).",
+    )
     args = parser.parse_args()
 
     df = pd.read_csv(args.csv)
@@ -1270,6 +1567,7 @@ def main() -> None:
         )
         fig.tight_layout()
         save_figure_png_and_pdf(out_png)
+        save_plot_data_csv(g, out_png)
         plt.close(fig)
         coverage.append((group_id, simulation_hpd_coverage_percent(g)))
 
@@ -1278,7 +1576,12 @@ def main() -> None:
     fig_bar, ax_bar = plt.subplots(figsize=(4.0, 2.8))
     plot_hpd_coverage_barplot(ax_bar, gids, pcts, PARAM_GROUP_TITLES)
     fig_bar.tight_layout()
-    save_figure_png_and_pdf(args.output_dir / "ds_param_coverage.png")
+    coverage_png = args.output_dir / "ds_param_coverage.png"
+    save_figure_png_and_pdf(coverage_png)
+    save_plot_data_csv(
+        pd.DataFrame({"group_id": gids, "coverage_percent": pcts}),
+        coverage_png,
+    )
     plt.close(fig_bar)
 
     df_mig: pd.DataFrame | None = None
@@ -1364,12 +1667,14 @@ def main() -> None:
         df_ne_reference = pd.read_csv(args.combined_ne_csv)
 
     if df_prev is not None and trajectory_meta is not None:
+        prev_cov_png = args.output_dir / "prevalence_coverage_over_time.png"
         plot_prevalence_coverage_over_time(
             df_prev,
-            args.output_dir / "prevalence_coverage_over_time.png",
+            prev_cov_png,
             trajectory_meta,
             ne_reference_df=df_ne_reference,
         )
+        save_plot_data_csv(df_prev, prev_cov_png)
         plot_prevalence_true_vs_estimate_scatters(
             df_prev,
             args.output_dir,
@@ -1392,6 +1697,7 @@ def main() -> None:
             if args.final_figure_out is not None
             else args.output_dir / "final_figure.png"
         )
+        example_sim_data = _load_example_sim_data(args)
         plot_final_figure(
             df_params=df,
             df_mig=df_mig,
@@ -1399,7 +1705,33 @@ def main() -> None:
             trajectory_meta=trajectory_meta,
             output_png=final_out,
             df_ne_reference=df_ne_reference,
+            example_sim_data=example_sim_data,
         )
+
+
+def _load_example_sim_data(args: argparse.Namespace) -> dict:
+    """
+    Build an argparse.Namespace with the shape expected by
+    :func:`analyse_posteriors.prepare_skyline_plot_data` (i.e. the same fields
+    produced by ``analyse_posteriors.parse_arguments``), then call it.
+    """
+    example_args = argparse.Namespace(
+        log_file_original=args.example_log_file_original,
+        log_file_datastream=args.example_log_file_datastream,
+        trajectory_file=args.example_trajectory_file,
+        case_counts_file=args.example_case_counts_file,
+        seroprevalence_file=args.example_seroprevalence_file,
+        wastewater_file=args.example_wastewater_file,
+        params_csv=args.example_params_csv,
+        deme_switches_csv=args.example_deme_switches_csv,
+        out_prefix=None,
+        cumulative_incidence_deme1=args.example_cumulative_incidence_deme1,
+        cumulative_incidence_deme2=args.example_cumulative_incidence_deme2,
+        nedynamics_deme1=args.example_nedynamics_deme1,
+        nedynamics_deme2=args.example_nedynamics_deme2,
+        burnin=args.example_burnin,
+    )
+    return prepare_skyline_plot_data(example_args)
 
 
 if __name__ == "__main__":

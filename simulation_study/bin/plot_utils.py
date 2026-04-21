@@ -230,3 +230,32 @@ def save_figure_png_and_pdf(output_file):
         format="pdf",
     )
     logger.info("Plot saved to %s and %s", output_file_str, pdf_file)
+
+
+def plot_data_csv_path(output_file, suffix: str = ""):
+    """Companion CSV path for a plot: ``<stem>[_<suffix>]_data.csv`` next to the PNG.
+
+    Args:
+        output_file (str or Path): Plot path (typically ``.png``).
+        suffix (str): Optional panel-specific suffix (e.g. ``"params_scatter"``)
+            inserted before ``_data.csv`` when one figure has multiple data slices.
+    """
+    from pathlib import Path as _Path
+
+    p = _Path(output_file)
+    stem = p.stem
+    sep = f"_{suffix}" if suffix else ""
+    return p.with_name(f"{stem}{sep}_data.csv")
+
+
+def save_plot_data_csv(df, output_file, *, suffix: str = "") -> None:
+    """Write the DataFrame that was the input to a plot as a companion CSV.
+
+    The file is written next to ``output_file`` with a ``_data.csv`` suffix
+    (replacing the image extension). Use ``suffix`` to disambiguate multiple
+    data slices sharing a single figure (e.g. panels of ``final_figure``).
+    """
+    csv_path = plot_data_csv_path(output_file, suffix=suffix)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(csv_path, index=False)
+    logger.info("Plot data saved to %s", csv_path)
