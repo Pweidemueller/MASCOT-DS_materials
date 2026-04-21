@@ -171,7 +171,9 @@ def plot_horizontal_coverage_barplot(
     y = np.arange(len(labels), dtype=float)
     ax.barh(y, coverages, color=color, edgecolor="white", linewidth=0.6, zorder=2)
     ax.set_yticks(y)
-    ax.set_yticklabels(labels if show_ylabels else [""] * len(labels))
+    ax.set_yticklabels(labels)
+    if not show_ylabels:
+        ax.tick_params(axis="y", labelleft=False)
     ax.invert_yaxis()
     ax.set_xlim(*xlim)
     ax.set_xlabel(xlabel, fontsize=FONTSIZES_LIST[1])
@@ -223,7 +225,9 @@ def plot_horizontal_bias_boxplot(
     if draw_zero_vline:
         ax.axvline(0.0, color="0.75", lw=0.7, ls="--", zorder=0)
     ax.set_yticks(y)
-    ax.set_yticklabels(labels if show_ylabels else [""] * len(labels))
+    ax.set_yticklabels(labels)
+    if not show_ylabels:
+        ax.tick_params(axis="y", labelleft=False)
     ax.invert_yaxis()
     ax.set_xlabel(xlabel, fontsize=FONTSIZES_LIST[1])
     ax.tick_params(labelsize=FONTSIZES_LIST[2])
@@ -1073,7 +1077,7 @@ def plot_final_figure(
         xlabel="Coverage (%)",
     )
 
-    # --- parameter relative bias (horizontal boxplot; own y labels, not sharey) ---
+    # --- parameter relative bias (horizontal boxplot; y-order matches coverage) ---
     ax_p_bias = fig.add_subplot(gs[0:2, 12:14])
     plot_horizontal_bias_boxplot(
         ax_p_bias,
@@ -1085,7 +1089,9 @@ def plot_final_figure(
             for gid, lbl in zip(param_groups, param_axis_labels)
         },
         xlabel="Relative bias",
+        show_ylabels=False,
     )
+    ax_p_bias.set_ylim(ax_p_cov.get_ylim())
 
     # --- prevalence scatter (start / secondary) -------------------------
     for row_offset, role_key in enumerate(("start", "secondary")):
@@ -1141,7 +1147,7 @@ def plot_final_figure(
         xlabel="Coverage (%)",
     )
 
-    # --- migration relative bias (horizontal boxplot; own y labels) ----
+    # --- migration relative bias (horizontal boxplot; y-order matches coverage) ----
     ax_m_bias = fig.add_subplot(gs[2:4, 12:14])
     rel_bias_by_dir = values_by_group(
         mig_enriched, "migration_direction", "rel_bias", mig_dirs
@@ -1151,7 +1157,9 @@ def plot_final_figure(
         mig_axis_labels,
         {mig_axis_labels[i]: rel_bias_by_dir[d] for i, d in enumerate(mig_dirs)},
         xlabel="Relative bias",
+        show_ylabels=False,
     )
+    ax_m_bias.set_ylim(ax_m_cov.get_ylim())
 
     save_figure_png_and_pdf(output_png)
     plt.close(fig)
