@@ -1138,7 +1138,7 @@ def plot_final_figure(
 
     # --- figure & gridspec ----------------------------------------------
     fig = plt.figure(figsize=(14, 15))
-    gs = fig.add_gridspec(nrows=6, ncols=11, hspace=0.9, wspace=0.9)
+    gs = fig.add_gridspec(nrows=6, ncols=11, hspace=0.7, wspace=0.9)
 
     # --- Placeholder for external graphic (rows 0-1, cols 0-4) -----------
     ax_placeholder = fig.add_subplot(gs[0:2, 0:5])
@@ -1282,22 +1282,26 @@ def _place_example_sim_panels(
     fig: plt.Figure,
     gs,
     example_sim_data: dict | None,
+    *,
+    example_wspace: float = 1.6,
 ) -> None:
     """
     Draw the per-simulation prevalence + cumulative-incidence panels in rows 0-1,
-    cols 5-10, split by deme (start on cols 5-7, secondary on cols 8-10).
+    cols 5-10. A nested ``GridSpecFromSubplotSpec`` is used so only this region
+    gets a wider horizontal spacing (``example_wspace``) than the rest of the
+    figure — necessary because each panel carries two twin y-axes on the right.
+
+    The nested grid is 2 rows × 2 cols (start on col 0, secondary on col 1).
     Leaves the cells empty (axis off) when ``example_sim_data`` is ``None`` or
     lacks HPD data.
     """
-    cell_specs = {
-        "start": (slice(5, 8)),
-        "secondary": (slice(8, 11)),
-    }
+    inner_gs = gs[0:2, 5:11].subgridspec(2, 2, wspace=example_wspace, hspace=0.4)
+    cell_specs = {"start": 0, "secondary": 1}
 
     def _blank() -> None:
-        for _, cslice in cell_specs.items():
+        for col_idx in cell_specs.values():
             for r in (0, 1):
-                ax = fig.add_subplot(gs[r, cslice])
+                ax = fig.add_subplot(inner_gs[r, col_idx])
                 ax.set_axis_off()
 
     if example_sim_data is None:
@@ -1338,10 +1342,10 @@ def _place_example_sim_panels(
 
     for deme in demes:
         role = role_for_deme[int(deme)]
-        cslice = cell_specs[role]
+        col_idx = cell_specs[role]
         show_legend = role == "secondary"
 
-        ax_prev = fig.add_subplot(gs[0, cslice])
+        ax_prev = fig.add_subplot(inner_gs[0, col_idx])
         _plot_prevalence_panel(
             ax_prev,
             deme,
@@ -1363,7 +1367,7 @@ def _place_example_sim_panels(
         if max_time is not None:
             ax_prev.set_xlim(0, max_time * time_factor)
 
-        ax_cum = fig.add_subplot(gs[1, cslice])
+        ax_cum = fig.add_subplot(inner_gs[1, col_idx])
         _plot_cumincidence_panel(
             ax_cum,
             deme,
