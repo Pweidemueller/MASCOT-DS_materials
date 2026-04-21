@@ -271,8 +271,8 @@ def simulate_wastewater(
     tmp = prevalence["value"].values[sampled_time_idx]
     # real median of the lognormal distribution of wastewater concentration
     median_real = tmp / N * scaling_factor
-    # clip to small epsilon (could be considered a detection limit) to avoid (log(0) but also not too small to avoid numerical issues when fitting with MASCOT (since MASCOT prevalence can't fit 0 prevalence and will instead try to fit super small values)
-    median_real = np.clip(median_real, 1e-3, None)
+    # # clip to small epsilon (could be considered a detection limit) to avoid (log(0) but also not too small to avoid numerical issues when fitting with MASCOT (since MASCOT prevalence can't fit 0 prevalence and will instead try to fit super small values)
+    # median_real = np.clip(median_real, 1e-3, None)
 
     mu_ln = np.log(median_real)
     # PMMoV normalised pathogen concentration (cp/g)
