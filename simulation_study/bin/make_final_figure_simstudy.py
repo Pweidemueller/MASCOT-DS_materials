@@ -1137,15 +1137,15 @@ def plot_final_figure(
     )
 
     # --- figure & gridspec ----------------------------------------------
-    fig = plt.figure(figsize=(14, 15))
-    gs = fig.add_gridspec(nrows=6, ncols=11, hspace=0.7, wspace=0.9)
+    fig = plt.figure(figsize=(18, 15))
+    gs = fig.add_gridspec(nrows=6, ncols=11, hspace=0.7, wspace=1.8)
 
     # --- Placeholder for external graphic (rows 0-1, cols 0-4) -----------
     ax_placeholder = fig.add_subplot(gs[0:2, 0:5])
     ax_placeholder.set_axis_off()
 
     # --- Per-simulation panels (rows 0-1, cols 5-10) --------------------
-    _place_example_sim_panels(fig, gs, example_sim_data)
+    _place_example_sim_panels(fig, gs, example_sim_data, example_wspace=0.9)
 
     # --- prevalence scatter (rows 2-3, cols 0-1) ------------------------
     for row_offset, role_key in enumerate(("start", "secondary")):
@@ -1283,7 +1283,7 @@ def _place_example_sim_panels(
     gs,
     example_sim_data: dict | None,
     *,
-    example_wspace: float = 1.6,
+    example_wspace: float = 1.0,
 ) -> None:
     """
     Draw the per-simulation prevalence + cumulative-incidence panels in rows 0-1,

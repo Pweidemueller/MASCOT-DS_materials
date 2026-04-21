@@ -1847,7 +1847,7 @@ def _plot_prevalence_panel(
                 label_fontsize = fontsizes[1]
                 labelpad_est = max(6.0, label_fontsize)
                 offset_points = (
-                    3.0 * fontsize_tick + labelpad_est + label_fontsize * 1.2 + 10.0
+                    3.0 * fontsize_tick + labelpad_est + label_fontsize * 1.1 + 6.0
                 )
                 ax3.spines["right"].set_position(("outward", offset_points))
             else:
