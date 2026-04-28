@@ -1346,6 +1346,37 @@ def plot_final_figure(
     plt.close(fig)
 
 
+def plot_parameter_relative_bias_figure(df_params: pd.DataFrame, output_png: Path) -> None:
+    """Standalone vertical boxplot for relative bias across parameter groups."""
+    output_png = Path(output_png)
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    df_plot = df_params.copy()
+    df_plot["rel_bias"] = (df_plot["median"] - df_plot["true_value"]) / df_plot[
+        "true_value"
+    ]
+    param_groups = list(PARAM_GROUP_ORDER)
+    param_axis_labels = [PARAM_GROUP_AXIS_LABELS[g] for g in param_groups]
+    rel_bias_by_group = {
+        lbl: df_plot[df_plot["group_id"] == gid]["rel_bias"]
+        .dropna()
+        .to_numpy(dtype=float)
+        for gid, lbl in zip(param_groups, param_axis_labels)
+    }
+
+    fig, ax = plt.subplots(figsize=(3.6, 2.8))
+    plot_vertical_bias_boxplot(
+        ax,
+        param_axis_labels,
+        rel_bias_by_group,
+        ylabel="Relative bias",
+        show_xlabels=True,
+    )
+    fig.tight_layout()
+    save_figure_png_and_pdf(output_png)
+    save_plot_data_csv(df_plot, output_png)
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="True vs estimated parameter figures with HPD error bars."
