@@ -572,8 +572,8 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
 // Main workflow
 // ---------------------------------------------------------------------------
 workflow {
-    // Build tuples for sampling (index 1..50, seed 42+index)
-    tuples_to_sample = Channel.from(1..50).map { n ->
+    // Build tuples for sampling
+    tuples_to_sample = Channel.from(1..100).map { n ->
         tuple(n, params.ndemes, params.population_sizes, 41 + n)
     }
 
@@ -789,43 +789,43 @@ workflow {
     combine_ne_input = ne_original.combine(ne_datastreams)
     combined_ne = COMBINE_HPD_NE_BY_MODEL(combine_ne_input)
 
-    // ── [2] Quantify information content across leave-one-out variants ──
-    // Collect all relevant CSVs (params, prevalence, migration_rates) for
-    // datastream variants into a single flat list. The process sorts them
-    // by filename prefix, avoiding combine() list-flattening issues.
-    info_all_files = concatenated_csvs.concatenated_csv
-        .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
-        .map { it[2] }
-        .collect()
+    // // ── [2] Quantify information content across leave-one-out variants ──
+    // // Collect all relevant CSVs (params, prevalence, migration_rates) for
+    // // datastream variants into a single flat list. The process sorts them
+    // // by filename prefix, avoiding combine() list-flattening issues.
+    // info_all_files = concatenated_csvs.concatenated_csv
+    //     .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
+    //     .map { it[2] }
+    //     .collect()
 
-    QUANTIFY_INFORMATION_CONTENT(info_all_files)
+    // QUANTIFY_INFORMATION_CONTENT(info_all_files)
 
-    // ── [2] True vs estimated parameter figures ─────────────────────────
-    // Needs: params CSV (datastreams), migration CSV (datastreams), prevalence CSV (datastreams),
-    //        combined Ne CSV (from COMBINE_HPD_NE_BY_MODEL), concatenated sim metadata CSV
-    fig_params_csv = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'params' && it[1] == 'datastreams' }
-        .map { it[2] }
+    // // ── [2] True vs estimated parameter figures ─────────────────────────
+    // // Needs: params CSV (datastreams), migration CSV (datastreams), prevalence CSV (datastreams),
+    // //        combined Ne CSV (from COMBINE_HPD_NE_BY_MODEL), concatenated sim metadata CSV
+    // fig_params_csv = concatenated_csvs.concatenated_csv
+    //     .filter { it[0] == 'params' && it[1] == 'datastreams' }
+    //     .map { it[2] }
 
-    fig_mig_csv = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'migration_rates' && it[1] == 'datastreams' }
-        .map { it[2] }
+    // fig_mig_csv = concatenated_csvs.concatenated_csv
+    //     .filter { it[0] == 'migration_rates' && it[1] == 'datastreams' }
+    //     .map { it[2] }
 
-    fig_prev_csv = concatenated_csvs.concatenated_csv
-        .filter { it[0] == 'prevalence' && it[1] == 'datastreams' }
-        .map { it[2] }
+    // fig_prev_csv = concatenated_csvs.concatenated_csv
+    //     .filter { it[0] == 'prevalence' && it[1] == 'datastreams' }
+    //     .map { it[2] }
 
     // Concatenate per-simulation metadata CSVs (start deme + first-I times)
     all_sim_metadata = ds_outputs.sim_metadata.collect()
     concatenated_sim_metadata = CONCATENATE_SIM_METADATA(all_sim_metadata)
 
-    fig_truevsest_input = fig_params_csv
-        .combine(fig_mig_csv)
-        .combine(fig_prev_csv)
-        .combine(combined_ne.combined_ne_csv)
-        .combine(concatenated_sim_metadata.sim_metadata_csv)
+    // fig_truevsest_input = fig_params_csv
+    //     .combine(fig_mig_csv)
+    //     .combine(fig_prev_csv)
+    //     .combine(combined_ne.combined_ne_csv)
+    //     .combine(concatenated_sim_metadata.sim_metadata_csv)
 
-    MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
+    // MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 }
 
 // ---------------------------------------------------------------------------
@@ -987,7 +987,7 @@ workflow ANALYSE_FROM_PUBLISHED {
     PLOT_HPD_VALIDATION(plot_inputs)
 
     // ── [2] Per-simulation publication figures ──────────────────────────
-    MAKE_INDIVIDUAL_SIM_FIGURES(analysis_inputs)
+    // MAKE_INDIVIDUAL_SIM_FIGURES(analysis_inputs)
 
     // ── [2] Combine Ne HPD validation: original + datastreams → Model column
     ne_original = concatenated_csvs.concatenated_csv
@@ -1001,13 +1001,13 @@ workflow ANALYSE_FROM_PUBLISHED {
     combine_ne_input = ne_original.combine(ne_datastreams)
     combined_ne = COMBINE_HPD_NE_BY_MODEL(combine_ne_input)
 
-    // ── [2] Quantify information content across leave-one-out variants ──
-    info_all_files = concatenated_csvs.concatenated_csv
-        .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
-        .map { it[2] }
-        .collect()
+    // // ── [2] Quantify information content across leave-one-out variants ──
+    // info_all_files = concatenated_csvs.concatenated_csv
+    //     .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
+    //     .map { it[2] }
+    //     .collect()
 
-    QUANTIFY_INFORMATION_CONTENT(info_all_files)
+    // QUANTIFY_INFORMATION_CONTENT(info_all_files)
 
     // ── [2] True vs estimated parameter figures ─────────────────────────
     fig_params_csv = concatenated_csvs.concatenated_csv
@@ -1026,13 +1026,13 @@ workflow ANALYSE_FROM_PUBLISHED {
     published_sim_metadata = Channel
         .fromPath("${params.outdir}/3_analysis/all_sim_metadata.csv")
 
-    fig_truevsest_input = fig_params_csv
-        .combine(fig_mig_csv)
-        .combine(fig_prev_csv)
-        .combine(combined_ne.combined_ne_csv)
-        .combine(published_sim_metadata)
+    // fig_truevsest_input = fig_params_csv
+    //     .combine(fig_mig_csv)
+    //     .combine(fig_prev_csv)
+    //     .combine(combined_ne.combined_ne_csv)
+    //     .combine(published_sim_metadata)
 
-    MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
+    // MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 
     // ── ESS ─────────────────────────────────────────────────────────────
     ess_inputs = combined_logs_ch

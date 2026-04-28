@@ -4,10 +4,13 @@ Scatter plots of true parameter values vs posterior median, with HPD whiskers,
 plus a bar plot of simulation-level 95% HPD coverage per parameter group.
 
 Reads a validation CSV (e.g. all_params_*_hpd_validation.csv) and saves one figure
-per logical parameter group. Rows like caseCounts.scaling.Deme1:SimDataset and
-caseCounts.scaling.Deme2:SimDataset are combined into a single figure named
-caseCounts_scaling. Coverage for combined groups counts a simulation as covered only
-if every deme row for that simulation has inHPD==1.
+per logical parameter group. For scaling parameters (case counts and wastewater),
+per-deme rows are saved as separate figures by outbreak role
+(``caseCounts_scaling_start_deme.png``, ``caseCounts_scaling_secondary_deme.png``),
+using the same start vs secondary assignment as prevalence panels
+(``--sim_metadata_csv`` required for those splits).
+Coverage for those groups still counts a simulation as covered only if every deme
+row for that simulation has inHPD==1.
 
 Optionally reads a migration-rates HPD validation CSV and saves (1) a two-panel
 figure (bias and relative HPD width) with MASCOT vs MASCOT-DS boxplots per
@@ -96,15 +99,20 @@ PARAM_GROUP_TITLES: dict[str, str] = {
     # "seroprevalence.scaling": "SP scaling" — fixed to 1.0; not estimated
 }
 
-# Parameter groups whose per-deme rows are collapsed into a single series
-# (no legend, single color) in plot_final_figure. Remove an entry to restore
-# per-deme styling for that group.
-COLLAPSE_SERIES_GROUPS: frozenset[str] = frozenset(
-    {
-        "caseCounts.scaling",
-        "wastewater.scaling",
-    }
+# Scaling parameters: true-vs-estimate scatters are one panel per outbreak role
+# (start deme vs secondary deme; standalone files and nested subplots in plot_final_figure).
+SCALING_PARAM_GROUPS: frozenset[str] = frozenset(
+    {"caseCounts.scaling", "wastewater.scaling"}
 )
+
+# Order of nested panels / standalone files (matches prevalence rows).
+SCALING_DEME_ROLE_ORDER: tuple[str, ...] = ("start", "secondary")
+
+# Filename fragments for scaling outputs (see make_figure_individualsim._deme_label_for_filename).
+SCALING_ROLE_FILENAME_STEM: dict[str, str] = {
+    "start": "start_deme",
+    "secondary": "secondary_deme",
+}
 
 # Short y-axis tick labels for the compact horizontal coverage / bias panels.
 # Newlines keep labels vertically compact so they fit in narrow gridspec cells.
@@ -587,6 +595,68 @@ def add_group_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["group_id"] = [p[0] for p in parsed]
     out["series_label"] = [p[1] for p in parsed]
     return out
+
+
+def parse_deme_index_from_scaling_series_label(series_label: str) -> int | None:
+    """Map ``Deme1`` / ``Deme2`` style suffix to 0-based deme index, else ``None``.
+
+    Parameter names use 1-based deme labels (``Deme1``, ``Deme2``) while the
+    trajectory metadata uses 0-based indices (0, 1), so the parsed number is
+    decremented by one.
+    """
+    m = re.match(r"^Deme(\d+)$", str(series_label).strip())
+    return int(m.group(1)) - 1 if m else None
+
+
+def dataframe_has_scaling_deme_series_rows(df: pd.DataFrame) -> bool:
+    """True if *df* has scaling-group rows with ``series_label`` like ``Deme1``."""
+    mask = df["group_id"].isin(SCALING_PARAM_GROUPS)
+    if not mask.any():
+        return False
+    for sl in df.loc[mask, "series_label"].fillna("").astype(str).unique():
+        if parse_deme_index_from_scaling_series_label(sl) is not None:
+            return True
+    return False
+
+
+def scaling_frame_has_deme_series_labels(g: pd.DataFrame) -> bool:
+    """True if this parameter-group frame uses ``DemeN`` ``series_label`` suffixes."""
+    for sl in g["series_label"].fillna("").astype(str).unique():
+        if parse_deme_index_from_scaling_series_label(sl) is not None:
+            return True
+    return False
+
+
+def scaling_rows_for_deme_role(
+    g: pd.DataFrame,
+    starting_deme_by_sim: dict[str, int],
+    role: str,
+) -> pd.DataFrame:
+    """
+    Rows where ``series_label`` is ``DemeN`` and *N* is the outbreak start deme
+    (``role`` ``\"start\"``) or the other deme (``\"secondary\"``), per ``Simulation``.
+    """
+    out = g.copy()
+    deme_nums = out["series_label"].map(parse_deme_index_from_scaling_series_label)
+    valid = deme_nums.notna()
+    out = out.loc[valid].copy()
+    deme_nums = deme_nums.loc[valid]
+    sim_str = out["Simulation"].astype(str)
+    start_demes = sim_str.map(starting_deme_by_sim)
+    if start_demes.isna().any():
+        missing = out.loc[start_demes.isna(), "Simulation"].unique()
+        raise ValueError(
+            "Missing outbreak start deme for Simulation id(s) not in lookup: "
+            f"{list(missing)}"
+        )
+    start_demes = start_demes.astype(int)
+    row_roles = np.where(
+        deme_nums.to_numpy(dtype=int) == start_demes.to_numpy(dtype=int),
+        "start",
+        "secondary",
+    )
+    out = out.assign(_scaling_deme_role=row_roles)
+    return out[out["_scaling_deme_role"] == role].drop(columns="_scaling_deme_role")
 
 
 def group_id_to_filename_stem(group_id: str) -> str:
@@ -1093,7 +1163,8 @@ def plot_final_figure(
     * rows 4-5, cols 0-1: migration scatter (start→secondary / secondary→start)
     * row 4 cols 2-3 (coverage, no x-tick labels) and row 5 cols 2-3 (bias,
       x-tick labels): migration vertical coverage + bias with shared x
-    * rows 4-5, cols 4-7: 2×2 parameter scatter plots
+    * rows 4-5, cols 4-7: 2×2 parameter scatter cells; scaling groups use a nested
+      1×2 grid (one subplot per deme) within each cell
     * row 4 cols 8-10 (coverage) / row 5 cols 8-10 (bias): parameter vertical
       coverage + bias with shared x
 
@@ -1228,16 +1299,29 @@ def plot_final_figure(
         "wastewater.sigma": (5, slice(6, 8)),
     }
     for gid, (r, cslice) in param_cells.items():
-        ax = fig.add_subplot(gs[r, cslice])
-        sub = df_params[df_params["group_id"] == gid].copy()
-        if gid in COLLAPSE_SERIES_GROUPS:
-            sub["series_label"] = ""
-        plot_param_true_vs_estimate(
-            ax,
-            sub,
-            title=PARAM_GROUP_TITLES.get(gid, gid),
-            show_legend=False,
-        )
+        cell = gs[r, cslice]
+        base_title = PARAM_GROUP_TITLES.get(gid, gid)
+        if gid in SCALING_PARAM_GROUPS:
+            g_full = df_params[df_params["group_id"] == gid].copy()
+            inner = cell.subgridspec(1, len(SCALING_DEME_ROLE_ORDER), wspace=0.45)
+            for j, role in enumerate(SCALING_DEME_ROLE_ORDER):
+                ax = fig.add_subplot(inner[0, j])
+                sub = scaling_rows_for_deme_role(g_full, starting_deme_by_sim, role)
+                plot_param_true_vs_estimate(
+                    ax,
+                    sub,
+                    title=f"{base_title} ({PREV_ROLE_PANEL_TITLES[role]})",
+                    show_legend=False,
+                )
+        else:
+            ax = fig.add_subplot(cell)
+            sub = df_params[df_params["group_id"] == gid].copy()
+            plot_param_true_vs_estimate(
+                ax,
+                sub,
+                title=base_title,
+                show_legend=False,
+            )
 
     # --- parameter vertical coverage (row 4) + bias (row 5), cols 8-10 --
     param_groups = list(PARAM_GROUP_ORDER)
@@ -1281,6 +1365,37 @@ def plot_final_figure(
             save_plot_data_csv(
                 cum_hpd, output_png, suffix="example_sim_cumulative_incidence"
             )
+    plt.close(fig)
+
+
+def plot_parameter_relative_bias_figure(df_params: pd.DataFrame, output_png: Path) -> None:
+    """Standalone vertical boxplot for relative bias across parameter groups."""
+    output_png = Path(output_png)
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    df_plot = df_params.copy()
+    df_plot["rel_bias"] = (df_plot["median"] - df_plot["true_value"]) / df_plot[
+        "true_value"
+    ]
+    param_groups = list(PARAM_GROUP_ORDER)
+    param_axis_labels = [PARAM_GROUP_AXIS_LABELS[g] for g in param_groups]
+    rel_bias_by_group = {
+        lbl: df_plot[df_plot["group_id"] == gid]["rel_bias"]
+        .dropna()
+        .to_numpy(dtype=float)
+        for gid, lbl in zip(param_groups, param_axis_labels)
+    }
+
+    fig, ax = plt.subplots(figsize=(3.6, 2.8))
+    plot_vertical_bias_boxplot(
+        ax,
+        param_axis_labels,
+        rel_bias_by_group,
+        ylabel="Relative bias",
+        show_xlabels=True,
+    )
+    fig.tight_layout()
+    save_figure_png_and_pdf(output_png)
+    save_plot_data_csv(df_plot, output_png)
     plt.close(fig)
 
 
@@ -1570,18 +1685,59 @@ def main() -> None:
     df = add_group_columns(df)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    stem_meta: dict[str, tuple[int, float, float]] | None = None
+    starting_deme_for_plots: dict[str, int] | None = None
+    if args.sim_metadata_csv is not None and Path(args.sim_metadata_csv).is_file():
+        stem_meta = load_trajectory_meta_from_csv(Path(args.sim_metadata_csv))
+        starting_deme_for_plots = {
+            str(sim): stem_meta[trajectory_stem_from_simulation_id(str(sim))][0]
+            for sim in df["Simulation"].astype(str).unique()
+        }
+    if dataframe_has_scaling_deme_series_rows(df) and starting_deme_for_plots is None:
+        raise ValueError(
+            "Scaling parameter true-vs-estimate figures are split by start vs secondary deme. "
+            "Provide an existing --sim_metadata_csv (trajectory metadata with deme_type "
+            "start/secondary)."
+        )
+
     coverage: list[tuple[str, float]] = []
     for group_id, g in df.groupby("group_id", sort=True):
+        base_title = PARAM_GROUP_TITLES.get(group_id, group_id)
         stem = group_id_to_filename_stem(group_id)
-        out_png = args.output_dir / f"{stem}.png"
-        fig, ax = plt.subplots(figsize=(2.5, 2.5))
-        plot_param_true_vs_estimate(
-            ax, g, title=PARAM_GROUP_TITLES.get(group_id, group_id)
-        )
-        fig.tight_layout()
-        save_figure_png_and_pdf(out_png)
-        save_plot_data_csv(g, out_png)
-        plt.close(fig)
+        if group_id in SCALING_PARAM_GROUPS:
+            if not scaling_frame_has_deme_series_labels(g):
+                out_png = args.output_dir / f"{stem}.png"
+                fig, ax = plt.subplots(figsize=(2.5, 2.5))
+                plot_param_true_vs_estimate(ax, g, title=base_title)
+                fig.tight_layout()
+                save_figure_png_and_pdf(out_png)
+                save_plot_data_csv(g, out_png)
+                plt.close(fig)
+            else:
+                for role in SCALING_DEME_ROLE_ORDER:
+                    g_role = scaling_rows_for_deme_role(
+                        g, starting_deme_for_plots, role
+                    )
+                    slug = SCALING_ROLE_FILENAME_STEM[role]
+                    out_png = args.output_dir / f"{stem}_{slug}.png"
+                    fig, ax = plt.subplots(figsize=(2.5, 2.5))
+                    plot_param_true_vs_estimate(
+                        ax,
+                        g_role,
+                        title=f"{base_title} ({PREV_ROLE_PANEL_TITLES[role]})",
+                    )
+                    fig.tight_layout()
+                    save_figure_png_and_pdf(out_png)
+                    save_plot_data_csv(g_role, out_png)
+                    plt.close(fig)
+        else:
+            out_png = args.output_dir / f"{stem}.png"
+            fig, ax = plt.subplots(figsize=(2.5, 2.5))
+            plot_param_true_vs_estimate(ax, g, title=base_title)
+            fig.tight_layout()
+            save_figure_png_and_pdf(out_png)
+            save_plot_data_csv(g, out_png)
+            plt.close(fig)
         coverage.append((group_id, simulation_hpd_coverage_percent(g)))
 
     gids = [c[0] for c in coverage]
@@ -1596,6 +1752,8 @@ def main() -> None:
         coverage_png,
     )
     plt.close(fig_bar)
+    param_rel_bias_png = args.output_dir / "parameter_relative_bias.png"
+    plot_parameter_relative_bias_figure(df, param_rel_bias_png)
 
     df_mig: pd.DataFrame | None = None
     df_prev: pd.DataFrame | None = None
@@ -1641,7 +1799,8 @@ def main() -> None:
                 "(produced by simulate_datastreams.py and concatenated in the pipeline)."
             )
         # Load stem-keyed metadata, then remap to HPD CSV Simulation IDs via stem mapping.
-        stem_meta = load_trajectory_meta_from_csv(args.sim_metadata_csv)
+        if stem_meta is None:
+            stem_meta = load_trajectory_meta_from_csv(Path(args.sim_metadata_csv))
         sims: set[str] = set()
         if df_mig is not None:
             sims |= set(df_mig["Simulation"].astype(str).unique())
