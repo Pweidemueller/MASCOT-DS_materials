@@ -3457,6 +3457,7 @@ def _parse_beast_logs(args, mostrecent_sample_t):
         "skyline_long_original": skyline_long_original,
         "skyline_long_datastream": skyline_long_datastream,
         "tree_height_datastream": tree_height_datastream,
+        "rateshifts_datastream": rateshifts_datastream,
         "gridpointshifts_datastream": gridpointshifts_datastream,
     }
 
@@ -3679,6 +3680,8 @@ def prepare_skyline_plot_data(args):
         "deme_switches_df": inputs["deme_switches_df"],
         "log_content_original": logs["log_content_original"],
         "log_content_datastream": logs["log_content_datastream"],
+        "rateshifts_datastream": logs["rateshifts_datastream"],
+        "gridpointshifts_datastream": logs["gridpointshifts_datastream"],
     }
 
 

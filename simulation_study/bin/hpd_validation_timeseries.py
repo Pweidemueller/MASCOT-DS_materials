@@ -1,7 +1,7 @@
 """
 Shared HPD validation time-series prep and plotting (coverage, bias, relative HPD width).
 
-Used by make_final_figure_simstudy.py.
+Used by make_figure_simstudy.py.
 """
 
 from __future__ import annotations
