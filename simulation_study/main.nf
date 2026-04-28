@@ -558,7 +558,7 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
 
     script:
     """
-    make_figure_param_truevsestimate.py \
+    make_figure_simstudy.py \
         --csv ${params_csv} \
         --migration_rates_csv ${migration_rates_csv} \
         --prevalence_csv ${prevalence_csv} \
@@ -800,32 +800,32 @@ workflow {
 
     // QUANTIFY_INFORMATION_CONTENT(info_all_files)
 
-    // // ── [2] True vs estimated parameter figures ─────────────────────────
-    // // Needs: params CSV (datastreams), migration CSV (datastreams), prevalence CSV (datastreams),
-    // //        combined Ne CSV (from COMBINE_HPD_NE_BY_MODEL), concatenated sim metadata CSV
-    // fig_params_csv = concatenated_csvs.concatenated_csv
-    //     .filter { it[0] == 'params' && it[1] == 'datastreams' }
-    //     .map { it[2] }
+    // ── [2] True vs estimated parameter figures ─────────────────────────
+    // Needs: params CSV (datastreams), migration CSV (datastreams), prevalence CSV (datastreams),
+    //        combined Ne CSV (from COMBINE_HPD_NE_BY_MODEL), concatenated sim metadata CSV
+    fig_params_csv = concatenated_csvs.concatenated_csv
+        .filter { it[0] == 'params' && it[1] == 'datastreams' }
+        .map { it[2] }
 
-    // fig_mig_csv = concatenated_csvs.concatenated_csv
-    //     .filter { it[0] == 'migration_rates' && it[1] == 'datastreams' }
-    //     .map { it[2] }
+    fig_mig_csv = concatenated_csvs.concatenated_csv
+        .filter { it[0] == 'migration_rates' && it[1] == 'datastreams' }
+        .map { it[2] }
 
-    // fig_prev_csv = concatenated_csvs.concatenated_csv
-    //     .filter { it[0] == 'prevalence' && it[1] == 'datastreams' }
-    //     .map { it[2] }
+    fig_prev_csv = concatenated_csvs.concatenated_csv
+        .filter { it[0] == 'prevalence' && it[1] == 'datastreams' }
+        .map { it[2] }
 
     // Concatenate per-simulation metadata CSVs (start deme + first-I times)
     all_sim_metadata = ds_outputs.sim_metadata.collect()
     concatenated_sim_metadata = CONCATENATE_SIM_METADATA(all_sim_metadata)
 
-    // fig_truevsest_input = fig_params_csv
-    //     .combine(fig_mig_csv)
-    //     .combine(fig_prev_csv)
-    //     .combine(combined_ne.combined_ne_csv)
-    //     .combine(concatenated_sim_metadata.sim_metadata_csv)
+    fig_truevsest_input = fig_params_csv
+        .combine(fig_mig_csv)
+        .combine(fig_prev_csv)
+        .combine(combined_ne.combined_ne_csv)
+        .combine(concatenated_sim_metadata.sim_metadata_csv)
 
-    // MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
+    MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 }
 
 // ---------------------------------------------------------------------------
