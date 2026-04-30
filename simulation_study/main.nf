@@ -1026,13 +1026,13 @@ workflow ANALYSE_FROM_PUBLISHED {
     published_sim_metadata = Channel
         .fromPath("${params.outdir}/3_analysis/all_sim_metadata.csv")
 
-    // fig_truevsest_input = fig_params_csv
-    //     .combine(fig_mig_csv)
-    //     .combine(fig_prev_csv)
-    //     .combine(combined_ne.combined_ne_csv)
-    //     .combine(published_sim_metadata)
+    fig_truevsest_input = fig_params_csv
+        .combine(fig_mig_csv)
+        .combine(fig_prev_csv)
+        .combine(combined_ne.combined_ne_csv)
+        .combine(published_sim_metadata)
 
-    // MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
+    MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 
     // ── ESS ─────────────────────────────────────────────────────────────
     ess_inputs = combined_logs_ch

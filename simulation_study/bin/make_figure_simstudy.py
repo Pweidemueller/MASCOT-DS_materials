@@ -134,6 +134,19 @@ MIGRATION_DIRECTION_AXIS_LABELS: dict[str, str] = {
     "secondary -> start": "secondary ->\nstart",
 }
 
+# Parameter groups whose per-deme rows are collapsed into a single series
+# (no legend, single color) in plot_final_figure. Remove an entry to restore
+# per-deme styling for that group.
+COLLAPSE_SERIES_GROUPS: frozenset[str] = frozenset(
+    {
+        "caseCounts.scaling",
+        "wastewater.scaling",
+    }
+)
+
+# Alpha for median-line+quantile-band time-series panels; mirrors hpd_validation_timeseries.
+_TIME_SERIES_BAND_ALPHA = 0.22
+
 
 # ---------------------------------------------------------------------------
 # Reusable axis-level helpers
@@ -258,13 +271,17 @@ def plot_vertical_coverage_barplot(
     ylabel: str = "Coverage (%)",
     show_xlabels: bool = True,
     ylim: tuple[float, float] = (0.0, 100.0),
+    xlabel_angle: float = 0.0,
 ) -> None:
     """Vertical bars with categorical x; intended to stack over a bias boxplot (shared x)."""
     configure_pdf_fonts()
     x = np.arange(len(labels), dtype=float)
     ax.bar(x, coverages, color=color, edgecolor="white", linewidth=0.6, zorder=2)
     ax.set_xticks(x)
-    ax.set_xticklabels(labels)
+    if xlabel_angle > 0.0:
+        ax.set_xticklabels(labels, rotation=xlabel_angle, ha="right")
+    else:
+        ax.set_xticklabels(labels, rotation=xlabel_angle)
     if not show_xlabels:
         ax.tick_params(axis="x", labelbottom=False)
     ax.set_ylim(*ylim)
@@ -286,6 +303,7 @@ def plot_vertical_bias_boxplot(
     show_xlabels: bool = True,
     draw_zero_hline: bool = True,
     box_width: float = 0.5,
+    xlabel_angle: float = 0.0,
 ) -> None:
     """Vertical boxplots (one per categorical x); intended to share x with a coverage bar above."""
     configure_pdf_fonts()
@@ -316,17 +334,16 @@ def plot_vertical_bias_boxplot(
     if draw_zero_hline:
         ax.axhline(0.0, color="0.75", lw=0.7, ls="--", zorder=0)
     ax.set_xticks(x)
-    ax.set_xticklabels(labels)
+    if xlabel_angle > 0.0:
+        ax.set_xticklabels(labels, rotation=xlabel_angle, ha="right")
+    else:
+        ax.set_xticklabels(labels, rotation=xlabel_angle)
     if not show_xlabels:
         ax.tick_params(axis="x", labelbottom=False)
     ax.set_ylabel(ylabel, fontsize=FONTSIZES_LIST[1])
     ax.tick_params(labelsize=FONTSIZES_LIST[2])
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-
-
-# Alpha for median-line+quantile-band time-series panels; mirrors hpd_validation_timeseries.
-_TIME_SERIES_BAND_ALPHA = 0.22
 
 
 def plot_time_series_coverage_on_axis(
@@ -1219,11 +1236,11 @@ def plot_final_figure(
 
     # --- figure & gridspec ----------------------------------------------
     fig = plt.figure(figsize=(14, 10))
-    gs = fig.add_gridspec(nrows=5, ncols=5, hspace=0.8, wspace=1.1)
+    gs = fig.add_gridspec(nrows=4, ncols=10, hspace=0.9, wspace=1.3)
 
     # --- prevalence scatter (rows 0-1, col 0) ---------------------------
     for row_offset, role_key in enumerate(("start", "secondary")):
-        ax = fig.add_subplot(gs[row_offset, 0])
+        ax = fig.add_subplot(gs[row_offset, 0:2])
         sub = prev_scatter_frame[prev_scatter_frame["deme_role"] == role_key]
         plot_param_true_vs_estimate(
             ax,
@@ -1232,32 +1249,47 @@ def plot_final_figure(
         )
 
     # --- prevalence coverage over time (rows 0-1, cols 1-2) -------------
-    for row_offset, role_key in enumerate(("start", "secondary")):
-        ax = fig.add_subplot(gs[row_offset, 1:3])
-        plot_time_series_coverage_on_axis(
-            ax,
-            prev_coverage_agg,
-            role_key,
-            title=PREV_ROLE_PANEL_TITLES[role_key],
-            show_xlabel=(role_key == "secondary"),
-        )
+    ax = fig.add_subplot(gs[0, 2:6])
+    plot_time_series_coverage_on_axis(
+        ax,
+        prev_coverage_agg,
+        "start",
+        title=PREV_ROLE_PANEL_TITLES["start"],
+        show_xlabel="start",
+    )
+    ax = fig.add_subplot(gs[1, 2:6])
+    plot_time_series_coverage_on_axis(
+        ax,
+        prev_coverage_agg,
+        "secondary",
+        title=PREV_ROLE_PANEL_TITLES["secondary"],
+        show_xlabel="secondary",
+    )
 
-    # --- prevalence relative bias over time (rows 0-1, cols 3-4) --------
-    for row_offset, role_key in enumerate(("start", "secondary")):
-        ax = fig.add_subplot(gs[row_offset, 3:5])
-        plot_time_series_metric_on_axis(
-            ax,
-            prev_rel_bias_agg,
-            role_key,
-            ylabel="Relative bias",
-            title=PREV_ROLE_PANEL_TITLES[role_key],
-            show_xlabel=(role_key == "secondary"),
-            draw_zero_line=True,
-        )
+    ax = fig.add_subplot(gs[0, 6:10])
+    plot_time_series_metric_on_axis(
+        ax,
+        prev_rel_bias_agg,
+        "start",
+        ylabel="Relative bias",
+        title=PREV_ROLE_PANEL_TITLES["start"],
+        show_xlabel="start",
+        draw_zero_line=True,
+    )
+    ax = fig.add_subplot(gs[1, 6:10])
+    plot_time_series_metric_on_axis(
+        ax,
+        prev_rel_bias_agg,
+        "secondary",
+        ylabel="Relative bias",
+        title=PREV_ROLE_PANEL_TITLES["secondary"],
+        show_xlabel="secondary",
+        draw_zero_line=True,
+    )
 
     # --- migration scatter (row 2, cols 0-1) ----------------------------
     for col_idx, direction in enumerate(MIGRATION_DIRECTION_LABELS):
-        ax = fig.add_subplot(gs[2, col_idx])
+        ax = fig.add_subplot(gs[2+col_idx, 0:2])
         sub = mig_enriched[mig_enriched["migration_direction"] == direction].copy()
         sub["series_label"] = ""
         plot_param_true_vs_estimate(
@@ -1265,41 +1297,43 @@ def plot_final_figure(
         )
 
     # --- migration coverage (1.5 width) + rel bias (1.5 width)
-    #     nested 1×2 inside row 2, cols 2-5 -----------------------------
+    #     nested 1×2 inside row 2, cols 2-4 -----------------------------
     mig_dirs = list(MIGRATION_DIRECTION_LABELS)
     mig_axis_labels = [MIGRATION_DIRECTION_AXIS_LABELS[d] for d in mig_dirs]
-    mig_inner = gs[2, 2:5].subgridspec(1, 2, wspace=0.6)
-    ax_m_cov = fig.add_subplot(mig_inner[0, 0])
+    # mig_inner = gs[2, 2:].subgridspec(1, 2, wspace=0.6)
+    # ax_m_cov = fig.add_subplot(mig_inner[0, 0])
+    ax_m_cov = fig.add_subplot(gs[2, 2:4])
     mig_coverage = coverage_percent_by_group(
         mig_enriched, "migration_direction", mig_dirs
     )
-    plot_horizontal_coverage_barplot(
+    plot_vertical_coverage_barplot(
         ax_m_cov,
         mig_axis_labels,
         mig_coverage,
-        xlabel="Coverage (%)",
+        ylabel="Coverage (%)",
     )
-    ax_m_bias = fig.add_subplot(mig_inner[0, 1])
+    # ax_m_bias = fig.add_subplot(mig_inner[0, 1])
+    ax_m_bias = fig.add_subplot(gs[3, 2:4])
     rel_bias_by_dir = values_by_group(
         mig_enriched, "migration_direction", "rel_bias", mig_dirs
     )
-    plot_horizontal_bias_boxplot(
+    plot_vertical_bias_boxplot(
         ax_m_bias,
         mig_axis_labels,
         {mig_axis_labels[i]: rel_bias_by_dir[d] for i, d in enumerate(mig_dirs)},
-        xlabel="Relative bias",
-        show_ylabels=False,
+        ylabel="Relative bias",
+        show_xlabels=True,
     )
 
     # --- parameter scatter plots (2×2, rows 3-4, cols 0-1) --------------
     param_cells = {
-        "caseCounts.scaling": (3, 0),
-        "caseCounts.dispersion": (3, 1),
-        "wastewater.scaling": (4, 0),
-        "wastewater.sigma": (4, 1),
+        "caseCounts.scaling": (2, 4),
+        "caseCounts.dispersion": (2, 6),
+        "wastewater.scaling": (3, 4),
+        "wastewater.sigma": (3, 6),
     }
     for gid, (r, c) in param_cells.items():
-        ax = fig.add_subplot(gs[r, c])
+        ax = fig.add_subplot(gs[r, c:c+2])
         sub = df_params[df_params["group_id"] == gid].copy()
         if gid in COLLAPSE_SERIES_GROUPS:
             sub["series_label"] = ""
@@ -1313,15 +1347,16 @@ def plot_final_figure(
     # --- parameter vertical coverage (row 3) + bias (row 4), cols 2-4 ---
     param_groups = list(PARAM_GROUP_ORDER)
     param_axis_labels = [PARAM_GROUP_AXIS_LABELS[g] for g in param_groups]
-    ax_p_cov = fig.add_subplot(gs[3, 2:5])
+    ax_p_cov = fig.add_subplot(gs[2, 8:])
     plot_vertical_coverage_barplot(
         ax_p_cov,
         param_axis_labels,
         coverage_percent_by_group(df_params, "group_id", param_groups),
         ylabel="Coverage (%)",
-        show_xlabels=False,
+        show_xlabels=True,
+        xlabel_angle=45.0,
     )
-    ax_p_bias = fig.add_subplot(gs[4, 2:5], sharex=ax_p_cov)
+    ax_p_bias = fig.add_subplot(gs[3, 8:])
     plot_vertical_bias_boxplot(
         ax_p_bias,
         param_axis_labels,
@@ -1333,6 +1368,7 @@ def plot_final_figure(
         },
         ylabel="Relative bias",
         show_xlabels=True,
+        xlabel_angle=45.0,
     )
 
     save_figure_png_and_pdf(output_png)
@@ -1344,6 +1380,113 @@ def plot_final_figure(
     save_plot_data_csv(prev_coverage_agg, output_png, suffix="prevalence_coverage")
     save_plot_data_csv(prev_rel_bias_agg, output_png, suffix="prevalence_rel_bias")
     plt.close(fig)
+
+def plot_final_figure_reduced(
+    df_mig: pd.DataFrame,
+    df_prev: pd.DataFrame,
+    trajectory_meta: dict[str, tuple[int, float, float]],
+    output_png: Path,
+    *,
+    df_ne_reference: pd.DataFrame | None = None,
+) -> None:
+    """
+    
+    """
+    configure_pdf_fonts()
+    output_png = Path(output_png)
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    starting_deme_by_sim = {s: m[0] for s, m in trajectory_meta.items()}
+
+    # --- migration: restrict to MASCOT-DS and derive relative bias -----
+    mig_enriched = add_migration_direction_column(df_mig, starting_deme_by_sim)
+    mig_enriched = mig_enriched[mig_enriched["Model"] == MODEL_MASCOT_DS].copy()
+    mig_enriched["rel_bias"] = (
+        mig_enriched["median"] - mig_enriched["true_value"]
+    ) / mig_enriched["true_value"]
+
+    # --- prevalence: time-series aggregates and scatter frame ------------
+    df_prev_prep = prepare_validation_timeseries_df(
+        df_prev,
+        trajectory_meta,
+        starting_deme_by_sim,
+        ne_reference_df=df_ne_reference,
+    )
+    prev_coverage_agg = (
+        df_prev_prep.groupby(["time_index", "deme_role"], sort=True)
+        .agg(coverage=("inHPD", "mean"))
+        .reset_index()
+    )
+    df_prev_metrics = add_prevalence_bias_and_hpd_width_real_space(df_prev_prep)
+    prev_scatter_frame = _prepare_prevalence_scatter_frame(
+        df_prev, starting_deme_by_sim, log_space=True
+    )
+
+    # --- figure & gridspec ----------------------------------------------
+    fig = plt.figure(figsize=(10, 10))
+    gs = fig.add_gridspec(nrows=6, ncols=4, hspace=0.9, wspace=0.5)
+
+    # --- prevalence scatter (rows 0-1, col 0) ---------------------------
+    for row_offset, role_key in enumerate(("start", "secondary")):
+        ax = fig.add_subplot(gs[2*row_offset:2*row_offset+2, 0:2])
+        sub = prev_scatter_frame[prev_scatter_frame["deme_role"] == role_key]
+        plot_param_true_vs_estimate(
+            ax,
+            sub,
+            title=PREV_ROLE_PANEL_TITLES[role_key],
+        )
+
+    # --- prevalence coverage over time (rows 0-1, cols 1-2) -------------
+    ax = fig.add_subplot(gs[4, 0:3])
+    plot_time_series_coverage_on_axis(
+        ax,
+        prev_coverage_agg,
+        "start",
+        title=PREV_ROLE_PANEL_TITLES["start"],
+        show_xlabel="start",
+    )
+    ax = fig.add_subplot(gs[5, 0:3])
+    plot_time_series_coverage_on_axis(
+        ax,
+        prev_coverage_agg,
+        "secondary",
+        title=PREV_ROLE_PANEL_TITLES["secondary"],
+        show_xlabel="secondary",
+    )
+
+    # --- migration scatter (row 2, cols 0-1) ----------------------------
+    for col_idx, direction in enumerate(MIGRATION_DIRECTION_LABELS):
+        ax = fig.add_subplot(gs[2*col_idx:2*col_idx+2, 2:])
+        sub = mig_enriched[mig_enriched["migration_direction"] == direction].copy()
+        sub["series_label"] = ""
+        plot_param_true_vs_estimate(
+            ax, sub, title=MIGRATION_DIRECTION_TITLES[direction]
+        )
+
+    # --- migration coverage (1.5 width) + rel bias (1.5 width)
+    #     nested 1×2 inside row 2, cols 2-4 -----------------------------
+    mig_dirs = list(MIGRATION_DIRECTION_LABELS)
+    mig_axis_labels = [MIGRATION_DIRECTION_AXIS_LABELS[d] for d in mig_dirs]
+    # mig_inner = gs[2, 2:].subgridspec(1, 2, wspace=0.6)
+    # ax_m_cov = fig.add_subplot(mig_inner[0, 0])
+    ax_m_cov = fig.add_subplot(gs[4:, 3])
+    mig_coverage = coverage_percent_by_group(
+        mig_enriched, "migration_direction", mig_dirs
+    )
+    plot_vertical_coverage_barplot(
+        ax_m_cov,
+        mig_axis_labels,
+        mig_coverage,
+        ylabel="Coverage (%)",
+    )
+
+    save_figure_png_and_pdf(output_png)
+    # Per-panel data CSVs. Different panels have incompatible schemas, so emit
+    # one CSV per logical data slice rather than a single merged file.
+    save_plot_data_csv(mig_enriched, output_png, suffix="migration")
+    save_plot_data_csv(prev_scatter_frame, output_png, suffix="prevalence_scatter")
+    save_plot_data_csv(prev_coverage_agg, output_png, suffix="prevalence_coverage")
+    plt.close(fig)
+
 
 
 def plot_parameter_relative_bias_figure(df_params: pd.DataFrame, output_png: Path) -> None:
@@ -1662,6 +1805,13 @@ def main() -> None:
             df_prev=df_prev,
             trajectory_meta=trajectory_meta,
             output_png=final_out,
+            df_ne_reference=df_ne_reference,
+        )
+        plot_final_figure_reduced(
+            df_mig=df_mig,
+            df_prev=df_prev,
+            trajectory_meta=trajectory_meta,
+            output_png=args.output_dir / "final_figure_reduced.png",
             df_ne_reference=df_ne_reference,
         )
 
