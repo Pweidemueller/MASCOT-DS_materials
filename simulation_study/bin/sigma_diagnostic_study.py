@@ -2,32 +2,56 @@
 """
 Aggregate per-simulation σ diagnostics for the wastewater observation model.
 
-Loops over every simulation under ``--results_dir`` (default
-``simulation_study/results``), loads the same inputs
-``make_figure_individualsim.py`` uses, computes posterior-mean residuals
-via ``compute_wastewater_residuals``, and records per sim:
+For every simulation under ``--results_dir`` this script:
+  1. Loads the same inputs ``make_figure_individualsim.py`` uses.
+  2. Computes per-observation wastewater residuals via
+     ``compute_wastewater_residuals``.
+  3. Reduces each sim to a single row of σ diagnostics.
+  4. Writes one master CSV plus four diagnostic figures.
 
-    n                       — number of finite wastewater residuals
-    sigma_true              — ds_ww_sigma from the simulator's params CSV
-    sigma_tilde             — sqrt( Σ r² / n ) using posterior-mean residuals
-                              (MLE of σ given posterior-mean μ̂)
-    sigma_post_median       — posterior median of wastewater.sigma:SimDataset
-    sigma_post_hpd_lower    — 95% HPD lower bound
-    sigma_post_hpd_upper    — 95% HPD upper bound
-    hpd_width               — sigma_post_hpd_upper − sigma_post_hpd_lower
-    hpd_width_over_sigma_tilde
-    sigma_post_median_minus_sigma_tilde
-    sigma_true_in_HPD       — is sigma_true within the 95% HPD
+Outputs (into ``--output_dir``):
+    all_sims_sigma_summary.csv          one row per sim — input for every plot
+    sigma_median_vs_sigma_tilde.png     posterior σ median vs empirical σ̃
+    sigma_post_vs_sigma_tilde_true.png  posterior σ (median + HPD whiskers)
+                                        vs σ̃_true — does the posterior track
+                                        the empirical scale on the true mean?
+    sigma_hpd_width_vs_sigma_tilde.png  posterior σ HPD width vs σ̃
+    sigma_ratio_vs_n.png                σ̂_post,median / σ_true vs n
+    sigma_tilde_true_vs_n.png           σ̃_true / σ_true vs n with χ² sampling
+                                        bands — quantifies how much of any
+                                        apparent σ shortfall is just finite-
+                                        sample noise on a known mean.
 
-Outputs (into ``--output_dir``, default ``sandbox/sigma_diagnostic``):
-    all_sims_sigma_summary.csv       — one row per sim (all sims)
-    problem_sims_sigma_summary.csv   — subset where sigma_true is outside the
-                                        95% HPD, truncated to ``--max_problem_sims``
-                                        (sorted by most-informative first)
-    sigma_median_vs_sigma_tilde.png  — scatter of σ̂_post_median vs σ̃,
-                                        with y=x and prior median ≈ 0.50 refs
-    sigma_hpd_width_vs_sigma_tilde.png — HPD width vs σ̃ with 0.49·σ̃ reference
-                                          (flat-log-σ n=40 expectation)
+Definitions of the per-sim quantities written to the CSV:
+
+    n                  number of finite wastewater residuals across both demes.
+    sigma_true         ds_ww_sigma from the simulator's parameters CSV. The
+                       data-generating log-scale SD on the wastewater
+                       likelihood, log(obs) ~ Normal(log(α·I/N), σ²).
+    sigma_tilde        sqrt( Σ res_inf² / n ).
+                       res_inf = log(obs) − log(μ_post), where μ_post uses the
+                       posterior-mean α and the posterior-median I trajectory.
+                       This is the MLE of σ if you treated the inferred mean
+                       as a fixed truth — i.e. how far the observations land
+                       from the model's inferred mean curve. Often referred
+                       to as the "RMS of posterior-mean residuals":
+                           sqrt(mean(r²))
+                       (no centring, because the model already centres each
+                       likelihood term at log(μ_post)).
+    sigma_tilde_true   sqrt( Σ res_sim² / n ).
+                       res_sim = log(obs) − log(μ_true), using the true α and
+                       the simulator's stored I trajectory. Under the
+                       simulator, res_sim ~ N(0, σ_true²) i.i.d., so
+                           n · (σ̃_true / σ_true)²  ~  χ²(n)
+                       and σ̃_true is chi-distributed around σ_true with mean
+                           E[σ̃_true] = σ_true · sqrt(2/n) · Γ((n+1)/2)/Γ(n/2)
+                       which is < σ_true at finite n. This quantifies the
+                       finite-sample downward bias of the empirical SD even
+                       when the mean is known exactly.
+    sigma_post_median  posterior median of wastewater.sigma:SimDataset.
+    sigma_post_hpd_lower / _upper   95 % HPD bounds of σ_post.
+    hpd_width          σ_post_hpd_upper − σ_post_hpd_lower.
+    sigma_true_in_HPD  whether σ_true lies within the 95 % HPD.
 """
 
 import argparse
@@ -40,11 +64,20 @@ from types import SimpleNamespace
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.special import gammaln
+from scipy.stats import chi2
 
 # Reuse functions from the sibling scripts in this bin/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyse_posteriors import prepare_skyline_plot_data  # noqa: E402
 from make_figure_individualsim import compute_wastewater_residuals  # noqa: E402
+
+
+# Sigma prior on the wastewater observation model: σ ~ LogNormal(M, S²) on the
+# linear scale (M, S parametrise the mean / sd of log σ).
+PRIOR_M_LOG = -0.7
+PRIOR_S_LOG = 0.3
+PRIOR_MEDIAN = float(np.exp(PRIOR_M_LOG))  # ≈ 0.497
 
 
 REQUIRED_FILE_ATTRS = (
@@ -63,6 +96,11 @@ REQUIRED_FILE_ATTRS = (
 )
 
 
+# --------------------------------------------------------------------------- #
+# Per-sim plumbing                                                            #
+# --------------------------------------------------------------------------- #
+
+
 def discover_simulations(results_dir):
     """Return sorted simulation IDs (e.g. ``20_2``) from 1_remaster_sim/*.traj."""
     remaster = Path(results_dir) / "1_remaster_sim"
@@ -76,7 +114,7 @@ def discover_simulations(results_dir):
 def build_args_namespace(results_dir, simid, probe_dir, burnin=0.0):
     """Build a SimpleNamespace matching analyse_posteriors' parse_arguments output.
 
-    ``probe_dir`` is a directory where ``prepare_skyline_plot_data`` is free to
+    ``probe_dir`` is a scratch directory where ``prepare_skyline_plot_data`` can
     write sidecar validation CSVs via ``out_prefix``; it must already exist.
     Returns None if any required input file is missing.
     """
@@ -113,9 +151,6 @@ def build_args_namespace(results_dir, simid, probe_dir, burnin=0.0):
             rm / f"{simid}_simulation_deme_switches_groundtruth.csv"
         ),
         burnin=burnin,
-        # prepare_skyline_plot_data writes HPD validation CSVs using out_prefix
-        # as a path prefix. Keep them inside the user's chosen output dir so
-        # nothing lands in canonical results folders.
         out_prefix=str(Path(probe_dir) / f"{simid}"),
     )
     for attr in REQUIRED_FILE_ATTRS:
@@ -125,72 +160,74 @@ def build_args_namespace(results_dir, simid, probe_dir, burnin=0.0):
 
 
 def summarise_sim(simid, df_resid, sigma_true, sigma_post):
-    """Return a one-row dict with σ diagnostics for a single sim, or None."""
+    """Reduce one sim's per-observation residuals to a single diagnostic row."""
     if df_resid is None or df_resid.empty:
         return None
     if sigma_true is None or sigma_post is None:
         return None
 
-    res = df_resid["res_inf"].to_numpy()
-    res = res[np.isfinite(res)]
-    n = int(res.size)
+    res_inf = df_resid["res_inf"].to_numpy()
+    res_sim = df_resid["res_sim"].to_numpy()
+    keep = np.isfinite(res_inf) & np.isfinite(res_sim)
+    res_inf = res_inf[keep]
+    res_sim = res_sim[keep]
+    n = int(res_inf.size)
     if n == 0:
         return None
 
-    sigma_tilde = float(np.sqrt(np.sum(res ** 2) / n))
+    # Empirical scales of the residuals. Both are RMS values (uncentred): the
+    # likelihood is centred at log(μ) so the residuals already have an assumed
+    # mean of zero, and dividing by n (not n-1) matches the σ MLE under that
+    # assumption.
+    sigma_tilde = float(np.sqrt(np.sum(res_inf ** 2) / n))
+    sigma_tilde_true = float(np.sqrt(np.sum(res_sim ** 2) / n))
+
     hpd_lo = float(sigma_post["hpd_lower"])
     hpd_hi = float(sigma_post["hpd_upper"])
-    width = hpd_hi - hpd_lo
     median = float(sigma_post["median"])
-    in_hpd = bool(hpd_lo <= sigma_true <= hpd_hi)
-
-    expected_factor = _expected_hpd_width_factor(n)
-    expected_width = expected_factor * sigma_tilde
 
     return {
         "simid": simid,
         "n": n,
         "sigma_true": float(sigma_true),
         "sigma_tilde": sigma_tilde,
+        "sigma_tilde_true": sigma_tilde_true,
         "sigma_post_median": median,
         "sigma_post_hpd_lower": hpd_lo,
         "sigma_post_hpd_upper": hpd_hi,
-        "hpd_width": width,
-        "hpd_width_over_sigma_tilde": (
-            width / sigma_tilde if sigma_tilde > 0 else float("nan")
-        ),
-        "expected_hpd_width_factor": expected_factor,
-        "expected_hpd_width": expected_width,
-        "hpd_width_over_expected": (
-            width / expected_width if expected_width > 0 else float("nan")
-        ),
-        "sigma_post_median_minus_sigma_tilde": median - sigma_tilde,
-        "sigma_true_in_HPD": in_hpd,
+        "hpd_width": hpd_hi - hpd_lo,
+        "sigma_true_in_HPD": bool(hpd_lo <= sigma_true <= hpd_hi),
     }
 
 
-PRIOR_M_LOG = -0.7    # mean of log(sigma) under LogNormal prior
-PRIOR_S_LOG = 0.3     # sd of log(sigma) under LogNormal prior
-PRIOR_MEDIAN = float(np.exp(PRIOR_M_LOG))  # ~0.497 on linear sigma
+# --------------------------------------------------------------------------- #
+# Helpers for the prior-based reference line on the HPD-width plot            #
+# --------------------------------------------------------------------------- #
 
 
 def _expected_hpd_width_factor(n_obs):
-    """Expected 95% HPD width on sigma as a multiple of sigma_median.
+    """Expected 95% HPD width on σ as a multiple of σ_median.
 
-    Uses the asymptotic Normal approximation on log sigma:
-        prior precision on log sigma  = 1 / PRIOR_S_LOG^2
-        likelihood Fisher info at MLE = 2n
-        posterior sd(log sigma)       ~ 1 / sqrt(prior_prec + 2n)
-        width on sigma                = sigma_median * (e^{+z*sd} - e^{-z*sd})
+    Asymptotic Normal approximation on log σ:
+        prior precision on log σ          = 1 / S²
+        likelihood Fisher info at the MLE = 2n
+        posterior sd(log σ)               ≈ 1 / sqrt(prior_prec + 2n)
+        width on σ                        = σ_med · (e^{+z·sd} − e^{−z·sd})
     """
     prior_prec = 1.0 / (PRIOR_S_LOG ** 2)
     post_prec = prior_prec + 2.0 * n_obs
     post_sd_log = 1.0 / np.sqrt(post_prec)
-    z = 1.959963984540054  # 97.5% standard normal
+    z = 1.959963984540054  # 97.5 % standard normal
     return float(np.exp(z * post_sd_log) - np.exp(-z * post_sd_log))
 
 
+# --------------------------------------------------------------------------- #
+# Plots                                                                       #
+# --------------------------------------------------------------------------- #
+
+
 def plot_median_vs_tilde(df_all, output_path):
+    """σ̂_post,median vs σ̃ — does the posterior locate where the residuals say it should?"""
     fig, ax = plt.subplots(figsize=(6.5, 6.5))
     ok = df_all[df_all["sigma_true_in_HPD"]]
     bad = df_all[~df_all["sigma_true_in_HPD"]]
@@ -225,7 +262,60 @@ def plot_median_vs_tilde(df_all, output_path):
     plt.close(fig)
 
 
+def plot_post_vs_tilde_true(df_all, output_path):
+    """σ̂_post (median + 95 % HPD whiskers) vs σ̃_true.
+
+    Same axes as sigma_median_vs_sigma_tilde but with the x-axis swapped to the
+    *true-mean* empirical scale σ̃_true (computed from res_sim, which uses the
+    simulator's known prevalence and α). If posteriors track σ̃_true rather
+    than σ_true, that's evidence the inference is anchored on the realised
+    residual scale — and σ̃_true's chi-distributed downward bias at finite n
+    propagates straight through to σ̂_post.
+    """
+    fig, ax = plt.subplots(figsize=(6.8, 6.5))
+    covered = df_all["sigma_true_in_HPD"].to_numpy(dtype=bool)
+    x = df_all["sigma_tilde_true"].to_numpy(dtype=float)
+    y = df_all["sigma_post_median"].to_numpy(dtype=float)
+    y_lo = df_all["sigma_post_hpd_lower"].to_numpy(dtype=float)
+    y_hi = df_all["sigma_post_hpd_upper"].to_numpy(dtype=float)
+
+    for mask, colour, label in [
+        (covered, "tab:blue", fr"$\sigma_{{true}}$ in 95% HPD (n={int(covered.sum())})"),
+        (~covered, "tab:red", fr"$\sigma_{{true}}$ outside HPD (n={int((~covered).sum())})"),
+    ]:
+        if mask.any():
+            ax.errorbar(
+                x[mask], y[mask],
+                yerr=[y[mask] - y_lo[mask], y_hi[mask] - y[mask]],
+                fmt="o", ms=4, alpha=0.8, color=colour,
+                elinewidth=0.6, capsize=2, label=label,
+            )
+
+    vals = np.concatenate([x, y, y_lo, y_hi])
+    vals = vals[np.isfinite(vals)]
+    lo = float(vals.min()) * 0.9 if vals.size else 0.0
+    hi = float(vals.max()) * 1.1 if vals.size else 1.0
+    ax.plot([lo, hi], [lo, hi], color="grey", ls="--", lw=1.0, label="y = x")
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+    ax.set_aspect("equal")
+    ax.set_xlabel(
+        r"$\tilde{\sigma}_{true}$ (log-scale SD) "
+        r"= RMS of true-mean residuals"
+    )
+    ax.set_ylabel(r"$\hat{\sigma}_{post}$ (median, 95% HPD whiskers)")
+    ax.set_title(
+        "Posterior σ vs empirical residual scale on the *true* mean\n"
+        "y = x means posterior tracks σ̃_true, not σ_true"
+    )
+    ax.legend(fontsize=9, loc="best")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_hpd_width_vs_tilde(df_all, output_path):
+    """HPD width vs σ̃ with a single prior-aware reference line at the median n."""
     fig, ax = plt.subplots(figsize=(7.5, 5.8))
     ok = df_all[df_all["sigma_true_in_HPD"]]
     bad = df_all[~df_all["sigma_true_in_HPD"]]
@@ -242,21 +332,15 @@ def plot_hpd_width_vs_tilde(df_all, output_path):
 
     xmax = float(df_all["sigma_tilde"].max()) * 1.05 if len(df_all) else 1.0
     xs = np.linspace(0.0, xmax, 100)
-
-    # Expected HPD width under the actual prior LogNormal(M, S^2) and n residuals,
-    # asymptotic Normal on log sigma:
-    #   posterior precision on log sigma ~ 1/S^2 + 2n
-    #   width on sigma ~ sigma_median * (e^{+z/sqrt(prec)} - e^{-z/sqrt(prec)})
-    # Single reference line uses the median n across sims.
     n_ref = int(df_all["n"].median()) if len(df_all) else 40
-    factor_actual = _expected_hpd_width_factor(n_ref)
+    factor = _expected_hpd_width_factor(n_ref)
     ax.plot(
-        xs, factor_actual * xs, color="tab:purple", ls="-", lw=1.2,
+        xs, factor * xs, color="tab:purple", ls="-", lw=1.2,
         label=(
             fr"expected width under prior "
             fr"LogNormal($M={PRIOR_M_LOG}$, $S={PRIOR_S_LOG}$), "
             fr"n={n_ref} (median across sims): "
-            fr"$\approx {factor_actual:.2f}\,\tilde{{\sigma}}$"
+            fr"$\approx {factor:.2f}\,\tilde{{\sigma}}$"
         ),
     )
 
@@ -275,16 +359,11 @@ def plot_hpd_width_vs_tilde(df_all, output_path):
 
 
 def plot_sigma_ratio_vs_n(df_all, output_path):
-    """Scatter σ̂_post / σ_true vs n, with theoretical overfit curves overlaid.
+    """σ̂_post,median / σ_true vs n with 95 % HPD error bars, coloured by HPD coverage.
 
-    Under the classical smoothing-spline overfit argument the MLE satisfies
-        E[σ̂²]  ≈  ((n − df_eff) / n) · σ_true²
-    => σ̂/σ_true ≈ sqrt(1 − df_eff / n).
-
-    Reference curves drawn for df_eff ∈ {2, 5, 11, 22} (11 = one knot per deme,
-    22 = both demes). If ensemble points track one of these curves, that df_eff
-    is an empirical estimate of the spline's effective degrees of freedom used
-    up fitting the wastewater.
+    Pure descriptive view: how does posterior σ recovery scale with the number
+    of wastewater observations that informed the fit? No theoretical curves —
+    those belong on the σ̃_true plot, where the sampling distribution is known.
     """
     n = df_all["n"].to_numpy(dtype=float)
     sigma_true = df_all["sigma_true"].to_numpy(dtype=float)
@@ -307,89 +386,98 @@ def plot_sigma_ratio_vs_n(df_all, output_path):
                 elinewidth=0.6, capsize=2, label=label,
             )
 
-    n_ref = np.linspace(max(1.0, n.min() * 0.9), n.max() * 1.05, 200)
-    for df_eff, colour, ls in [
-        (2, "tab:green", ":"),
-        (5, "tab:orange", "-."),
-        (11, "tab:purple", "--"),
-        (22, "black", "--"),
-    ]:
-        expected = np.sqrt(np.clip(1.0 - df_eff / n_ref, 0, None))
-        ax.plot(n_ref, expected, color=colour, ls=ls, lw=1.0,
-                label=fr"overfit: $\sqrt{{1 - {df_eff}/n}}$")
-
     ax.axhline(1.0, color="grey", lw=0.6)
-
     ax.set_xlabel(r"$n$ = total wastewater observations")
     ax.set_ylabel(r"$\hat{\sigma}_{post,median} / \sigma_{true}$")
-    ax.set_title(
-        "Posterior σ recovery vs data volume\n"
-        r"systematic shortfall below 1 is consistent with spline overfit"
-    )
-    ax.legend(fontsize=8, loc="lower right", ncol=2)
+    ax.set_title("Posterior σ recovery vs data volume")
+    ax.legend(fontsize=9, loc="lower right")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 
 
-def plot_linearised_overfit(df_all, output_path):
-    """Linearised view: (1 − σ̂²/σ_true²) vs 1/n with a fitted line through origin.
+def _chi_mean_factor(n):
+    """E[σ̃_true / σ_true] for n observations against a known mean.
 
-    Under E[σ̂²] ≈ ((n − df_eff)/n)·σ_true²:
-        y := 1 − σ̂²/σ_true²  ≈  df_eff · (1/n)
-    so the slope of a least-squares line through the origin is an empirical
-    estimate of df_eff. If the cloud scatters around zero with no slope, the
-    overfit story is wrong. A positive slope localises df_eff.
+    σ̃_true² · n / σ_true² ~ χ²(n)  ⇒  σ̃_true / σ_true ~ Chi(n) / sqrt(n)
+    E[Chi(n)] = sqrt(2) · Γ((n+1)/2) / Γ(n/2), evaluated stably via gammaln.
+    """
+    n = np.asarray(n, dtype=float)
+    log_factor = 0.5 * np.log(2.0 / n) + gammaln((n + 1) / 2) - gammaln(n / 2)
+    return np.exp(log_factor)
+
+
+def plot_sigma_tilde_true_vs_n(df_all, output_path):
+    """σ̃_true / σ_true vs n with χ²-based sampling bands.
+
+    Question: even with the mean known exactly, do the realised wastewater
+    observations look like they came from a *narrower* log-normal than the
+    true σ_true used to generate them?
+
+    σ̃_true = sqrt(Σ res_sim² / n), where res_sim = log(obs) − log(α_true·I_true/N).
+    Under the simulator's data-generating process,
+        n · (σ̃_true / σ_true)²  ~  χ²(n)
+    so the ratio's sampling distribution depends only on n, with no nuisance
+    parameters. The shaded band shows the analytic 2.5–97.5 % envelope and the
+    dashed line is the mean E[σ̃_true / σ_true]. Points falling below the band
+    are unusually low even relative to what χ² alone allows.
+
+    Most points falling near or below E[…] is the "rarely far from the median"
+    story: with finite n on a known mean the empirical SD is downward-biased,
+    so observations look like they come from a narrower distribution than the
+    σ that actually generated them — and any inference that anchors on the
+    empirical residual scale will inherit this bias.
     """
     n = df_all["n"].to_numpy(dtype=float)
-    sigma_true = df_all["sigma_true"].to_numpy(dtype=float)
-    ratio_med = df_all["sigma_post_median"].to_numpy(dtype=float) / sigma_true
-    y = 1.0 - ratio_med ** 2
-    x = 1.0 / n
+    ratio = df_all["sigma_tilde_true"].to_numpy(dtype=float) / df_all[
+        "sigma_true"
+    ].to_numpy(dtype=float)
     covered = df_all["sigma_true_in_HPD"].to_numpy(dtype=bool)
 
-    # Least-squares slope through origin: slope = Σxy / Σx²
-    denom = float(np.sum(x ** 2))
-    slope = float(np.sum(x * y) / denom) if denom > 0 else float("nan")
-    # Rough 95% CI on the slope via residual variance
-    resid = y - slope * x
-    resid_var = float(np.sum(resid ** 2) / max(1, x.size - 1))
-    slope_se = float(np.sqrt(resid_var / denom)) if denom > 0 else float("nan")
-    slope_lo = slope - 1.96 * slope_se
-    slope_hi = slope + 1.96 * slope_se
-
-    fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    fig, ax = plt.subplots(figsize=(8, 5.5))
     for mask, colour, label in [
         (covered, "tab:blue", fr"$\sigma_{{true}}$ in 95% HPD (n={int(covered.sum())})"),
         (~covered, "tab:red", fr"$\sigma_{{true}}$ outside HPD (n={int((~covered).sum())})"),
     ]:
         if mask.any():
-            ax.scatter(x[mask], y[mask], s=28, alpha=0.8, color=colour, label=label)
+            ax.scatter(n[mask], ratio[mask], s=26, alpha=0.8, color=colour, label=label)
 
-    xs = np.linspace(0.0, float(x.max()) * 1.05, 100)
-    ax.plot(xs, slope * xs, color="black", lw=1.2,
-            label=(fr"fit through origin: slope $= df_{{eff}}$ "
-                   fr"$= {slope:.2f}$ (95% CI [{slope_lo:.2f}, {slope_hi:.2f}])"))
-    for df_eff, colour, ls in [
-        (11, "tab:purple", "--"),
-        (22, "grey", "--"),
-    ]:
-        ax.plot(xs, df_eff * xs, color=colour, ls=ls, lw=0.9,
-                label=fr"$df_{{eff}}={df_eff}$ reference")
-    ax.axhline(0.0, color="grey", lw=0.5)
+    n_min = max(2.0, float(np.min(n)) - 1)
+    n_max = float(np.max(n)) + 1
+    n_grid = np.linspace(n_min, n_max, 400)
+    band_lo = np.sqrt(chi2.ppf(0.025, n_grid) / n_grid)
+    band_hi = np.sqrt(chi2.ppf(0.975, n_grid) / n_grid)
+    band_mean = _chi_mean_factor(n_grid)
 
-    ax.set_xlabel(r"$1/n$")
-    ax.set_ylabel(r"$1 - (\hat{\sigma}_{post,median} / \sigma_{true})^2$")
-    ax.set_title(
-        "Linearised overfit test\n"
-        r"slope $=$ empirical $df_{eff}$ the spline uses up fitting wastewater"
+    ax.fill_between(
+        n_grid, band_lo, band_hi, color="grey", alpha=0.18,
+        label=r"χ² 95% sampling band given known mean",
     )
-    ax.legend(fontsize=8, loc="best")
+    ax.plot(
+        n_grid, band_mean, color="black", ls="--", lw=1.0,
+        label=r"$E[\tilde{\sigma}_{true}/\sigma_{true}]$ (chi mean)",
+    )
+    ax.axhline(1.0, color="grey", lw=0.6)
+
+    frac_below_mean = float(np.mean(ratio < _chi_mean_factor(n)))
+    frac_below_band = float(np.mean(ratio < np.sqrt(chi2.ppf(0.025, n) / n)))
+
+    ax.set_xlabel(r"$n$ = total wastewater observations")
+    ax.set_ylabel(r"$\tilde{\sigma}_{true} / \sigma_{true}$")
+    ax.set_title(
+        "Empirical residual SD given the *true* known prevalence vs n\n"
+        f"share of sims below chi-mean: {frac_below_mean:.0%}, "
+        f"below 2.5% band: {frac_below_band:.0%}"
+    )
+    ax.legend(fontsize=9, loc="lower right")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
-    return {"df_eff_slope": slope, "df_eff_slope_ci_lo": slope_lo,
-            "df_eff_slope_ci_hi": slope_hi, "n_sims": int(x.size)}
+
+
+# --------------------------------------------------------------------------- #
+# Driver                                                                      #
+# --------------------------------------------------------------------------- #
 
 
 def main():
@@ -403,11 +491,6 @@ def main():
         help="Where to write CSVs and PNGs.",
     )
     parser.add_argument("--burnin", type=float, default=0.0)
-    parser.add_argument(
-        "--max_problem_sims", type=int, default=10,
-        help="Cap for problem_sims_sigma_summary.csv (sorted by smallest HPD "
-             "width relative to σ̃, so the most tightly-constrained misses come first).",
-    )
     parser.add_argument(
         "--limit", type=int, default=None,
         help="Process only the first N sims (smoke test).",
@@ -457,7 +540,6 @@ def main():
             traceback.print_exc()
             failures.append((simid, f"{type(exc).__name__}: {exc}"))
         finally:
-            # Large trajectories + BEAST logs stay in RAM otherwise.
             try:
                 del data  # noqa: F821
             except NameError:
@@ -469,37 +551,25 @@ def main():
         return
 
     df_all = pd.DataFrame(rows).sort_values("simid").reset_index(drop=True)
-    df_all.to_csv(out_dir / "all_sims_sigma_summary.csv", index=False)
 
-    problems = df_all[~df_all["sigma_true_in_HPD"]].copy()
-    # Smallest width / σ̃ first — the sims whose narrow HPD most tightly
-    # excludes the truth are the most informative failures.
-    problems.sort_values("hpd_width_over_sigma_tilde", inplace=True)
-    problems.head(cli.max_problem_sims).to_csv(
-        out_dir / "problem_sims_sigma_summary.csv", index=False
-    )
+    summary_csv = out_dir / "all_sims_sigma_summary.csv"
+    df_all.to_csv(summary_csv, index=False)
 
     plot_median_vs_tilde(df_all, out_dir / "sigma_median_vs_sigma_tilde.png")
+    plot_post_vs_tilde_true(df_all, out_dir / "sigma_post_vs_sigma_tilde_true.png")
     plot_hpd_width_vs_tilde(df_all, out_dir / "sigma_hpd_width_vs_sigma_tilde.png")
     plot_sigma_ratio_vs_n(df_all, out_dir / "sigma_ratio_vs_n.png")
-    linear_fit = plot_linearised_overfit(
-        df_all, out_dir / "sigma_linearised_overfit.png"
-    )
-    print(
-        "linearised overfit fit: "
-        f"df_eff ≈ {linear_fit['df_eff_slope']:.2f} "
-        f"(95% CI [{linear_fit['df_eff_slope_ci_lo']:.2f}, "
-        f"{linear_fit['df_eff_slope_ci_hi']:.2f}], "
-        f"{linear_fit['n_sims']} sims)"
-    )
+    plot_sigma_tilde_true_vs_n(df_all, out_dir / "sigma_tilde_true_vs_n.png")
 
     print("\n--- Summary ---")
-    print(f"sims summarised      : {len(df_all)}")
-    print(f"sigma_true outside HPD: {len(problems)}")
-    print(f"written               : {out_dir}/all_sims_sigma_summary.csv")
-    print(f"                      : {out_dir}/problem_sims_sigma_summary.csv")
+    print(f"sims summarised       : {len(df_all)}")
+    print(f"sigma_true outside HPD: {int((~df_all['sigma_true_in_HPD']).sum())}")
+    print(f"written               : {summary_csv}")
     print(f"                      : {out_dir}/sigma_median_vs_sigma_tilde.png")
+    print(f"                      : {out_dir}/sigma_post_vs_sigma_tilde_true.png")
     print(f"                      : {out_dir}/sigma_hpd_width_vs_sigma_tilde.png")
+    print(f"                      : {out_dir}/sigma_ratio_vs_n.png")
+    print(f"                      : {out_dir}/sigma_tilde_true_vs_n.png")
     if failures:
         print(f"failures/skips        : {len(failures)}")
         for simid, reason in failures:
