@@ -670,23 +670,33 @@ def _snap_to_grid(t_query, grid_times):
     return grid_times[idx], idx
 
 
-def compute_spline_snap_diagnostics(data, early_window_days=10):
-    """Per-observation posterior spline reconstruction + snap-to-grid bias quantities.
+def compute_spline_gridpoint_diagnostics(data, early_window_days=10, grid_mode="snap"):
+    """Per-observation posterior spline reconstruction + grid-evaluation bias quantities.
 
     For each wastewater obs at forward time t_obs in deme d, builds one natural cubic
     spline per posterior sample from ``SkylinePrev.Deme{d+1}.{1..K}`` and computes:
 
       * Ŝ(t_obs)           = logI_spline_obs       (spline at exact obs time)
-      * Ŝ(t_snap)          = logI_spline_snap      (spline at nearest grid point,
-                                                    which is what the wastewater
-                                                    likelihood evaluates)
-      * Δ_snap_spline      = Ŝ(t_obs) - Ŝ(t_snap)
-      * Δ_snap_true        = logI_true(t_obs) - logI_true(t_snap)
+      * Ŝ(t_eval)          = logI_spline_eval      (spline evaluated the way the
+                                                    BEAST likelihood does — see
+                                                    ``grid_mode`` below)
+      * Δ_grid_spline      = Ŝ(t_obs) - Ŝ(t_eval)
+      * Δ_grid_true        = logI_true(t_obs) - logI_true(t_eval)
       * B_infer            = Ŝ(t_obs) - logI_true(t_obs)     (pure inference bias)
-      * B_total            = Ŝ(t_snap) - logI_true(t_obs)    (what the likelihood sees)
+      * B_total            = Ŝ(t_eval) - logI_true(t_obs)    (what the likelihood sees)
+
+    ``grid_mode`` controls how prevalence is evaluated at each observation time:
+
+      * ``"snap"`` (default): use the spline value at the nearest grid point.
+        Matches the earlier BEAST likelihood.
+      * ``"interpolate"``: precompute the spline at every grid point and linearly
+        interpolate between the two bracketing grid values.  Matches the newer
+        BEAST likelihood.  In this mode ``t_eval == t_obs`` (no time displacement)
+        but Ŝ(t_eval) may still differ from Ŝ(t_obs) due to the piecewise-linear
+        approximation.
 
     All spline-based quantities are summarised per obs as posterior median + 95% HPD.
-    ``Δ_snap_true`` is sample-free (depends only on ground truth).
+    ``Δ_grid_true`` is sample-free (depends only on ground truth).
 
     Returns:
         dict with keys:
@@ -699,7 +709,12 @@ def compute_spline_snap_diagnostics(data, early_window_days=10):
           - ``grid_shifts_y`` (grid backward times, years)
           - ``max_rateshift_y`` (backward time of simstart = forward_T)
           - ``early_window_days``
+          - ``grid_mode``
     """
+    if grid_mode not in ("snap", "interpolate"):
+        raise ValueError(
+            f"grid_mode must be 'snap' or 'interpolate', got {grid_mode!r}"
+        )
     log_ds = data["log_content_datastream"]
     traj = data["trajectory_data"]
     ww = data["wastewater_data"]
@@ -707,18 +722,19 @@ def compute_spline_snap_diagnostics(data, early_window_days=10):
     grid_shifts = np.asarray(data["gridpointshifts_datastream"], dtype=float)
 
     if log_ds is None or log_ds.empty:
-        print("No datastream log; cannot run spline snap diagnostics.")
+        print("No datastream log; cannot run spline gridpoint diagnostics.")
         return None
     if ww is None or ww.empty:
-        print("No wastewater data; cannot run spline snap diagnostics.")
+        print("No wastewater data; cannot run spline gridpoint diagnostics.")
         return None
     if traj is None or traj.empty:
-        print("No trajectory data; cannot run spline snap diagnostics.")
+        print("No trajectory data; cannot run spline gridpoint diagnostics.")
         return None
     if rate_shifts.size == 0 or grid_shifts.size == 0:
-        print("Missing rate/grid shifts; cannot run spline snap diagnostics.")
+        print("Missing rate/grid shifts; cannot run spline gridpoint diagnostics.")
         return None
 
+    grid_shifts_asc = np.sort(grid_shifts)
     max_rateshift = float(rate_shifts.max())
     t_first_knot = float(rate_shifts.min())
     t_last_knot = float(rate_shifts.max())
@@ -770,14 +786,19 @@ def compute_spline_snap_diagnostics(data, early_window_days=10):
         t_obs_fwd = obs_d["t_wastewater_fromsimstart"].to_numpy(dtype=float)
         t_obs_back = max_rateshift - t_obs_fwd
 
-        # Snap to nearest grid point (in backward time)
-        t_snap_back, _ = _snap_to_grid(t_obs_back, grid_shifts)
-        t_snap_fwd = max_rateshift - t_snap_back
+        # Evaluation time depends on grid_mode:
+        #   snap:        nearest grid point in backward time
+        #   interpolate: same as obs time (interpolation happens in value space)
+        if grid_mode == "snap":
+            t_eval_back, _ = _snap_to_grid(t_obs_back, grid_shifts_asc)
+        else:
+            t_eval_back = t_obs_back.copy()
+        t_eval_fwd = max_rateshift - t_eval_back
 
         # Pre-allocate per-sample eval matrices (S, n_obs) and (S, n_dense)
         n_obs = t_obs_back.size
         S_obs = np.empty((n_samples, n_obs), dtype=float)
-        S_snap = np.empty((n_samples, n_obs), dtype=float)
+        S_eval = np.empty((n_samples, n_obs), dtype=float)
         S_dense = np.empty((n_samples, t_back_dense.size), dtype=float)
         S_knots = np.empty((n_samples, rate_shifts.size), dtype=float)
 
@@ -786,27 +807,33 @@ def compute_spline_snap_diagnostics(data, early_window_days=10):
             S_obs[s, :] = _eval_spline_clamped(
                 spline, t_obs_back, t_first_knot, t_last_knot
             )
-            S_snap[s, :] = _eval_spline_clamped(
-                spline, t_snap_back, t_first_knot, t_last_knot
-            )
+            if grid_mode == "snap":
+                S_eval[s, :] = _eval_spline_clamped(
+                    spline, t_eval_back, t_first_knot, t_last_knot
+                )
+            else:
+                grid_vals = _eval_spline_clamped(
+                    spline, grid_shifts_asc, t_first_knot, t_last_knot
+                )
+                S_eval[s, :] = np.interp(t_obs_back, grid_shifts_asc, grid_vals)
             S_dense[s, :] = _eval_spline_clamped(
                 spline, t_back_dense, t_first_knot, t_last_knot
             )
             S_knots[s, :] = knot_samples[s]  # at knots the spline passes exactly
 
-        # Ground truth at obs and snap times
+        # Ground truth at obs and eval times
         logI_true_obs = np.log(
             np.clip(_true_I_at_vec(t_obs_fwd, t_evt, I_evt), 1e-300, None)
         )
-        logI_true_snap = np.log(
-            np.clip(_true_I_at_vec(t_snap_fwd, t_evt, I_evt), 1e-300, None)
+        logI_true_eval = np.log(
+            np.clip(_true_I_at_vec(t_eval_fwd, t_evt, I_evt), 1e-300, None)
         )
 
         # Four derived quantities per sample, per obs
-        D_snap_spline = S_obs - S_snap  # (S, n_obs)
+        D_grid_spline = S_obs - S_eval  # (S, n_obs)
         B_infer = S_obs - logI_true_obs[None, :]  # (S, n_obs)
-        B_total = S_snap - logI_true_obs[None, :]  # (S, n_obs)
-        D_snap_true = logI_true_obs - logI_true_snap  # (n_obs,) — no sample dim
+        B_total = S_eval - logI_true_obs[None, :]  # (S, n_obs)
+        D_grid_true = logI_true_obs - logI_true_eval  # (n_obs,) — no sample dim
 
         def _summ(arr_2d_or_1d):
             """Return (median, hpd_lo, hpd_hi) along axis=0 using calculate_hpd."""
@@ -831,8 +858,8 @@ def compute_spline_snap_diagnostics(data, early_window_days=10):
             return med, lo, hi
 
         S_obs_med, S_obs_lo, S_obs_hi = _summ(S_obs)
-        S_snap_med, S_snap_lo, S_snap_hi = _summ(S_snap)
-        D_snap_spl_med, D_snap_spl_lo, D_snap_spl_hi = _summ(D_snap_spline)
+        S_eval_med, S_eval_lo, S_eval_hi = _summ(S_eval)
+        D_grid_spl_med, D_grid_spl_lo, D_grid_spl_hi = _summ(D_grid_spline)
         B_infer_med, B_infer_lo, B_infer_hi = _summ(B_infer)
         B_total_med, B_total_lo, B_total_hi = _summ(B_total)
         S_dense_med, S_dense_lo, S_dense_hi = _summ(S_dense)
@@ -842,25 +869,26 @@ def compute_spline_snap_diagnostics(data, early_window_days=10):
             per_obs_rows.append(
                 {
                     "deme": deme_py,
+                    "grid_mode": grid_mode,
                     "t_obs_years": float(t_obs_fwd[i]),
                     "t_obs_days": float(t_obs_fwd[i] * 365.0),
-                    "t_snap_years": float(t_snap_fwd[i]),
-                    "t_snap_days": float(t_snap_fwd[i] * 365.0),
-                    "snap_delta_days": float((t_snap_fwd[i] - t_obs_fwd[i]) * 365.0),
+                    "t_eval_years": float(t_eval_fwd[i]),
+                    "t_eval_days": float(t_eval_fwd[i] * 365.0),
+                    "eval_delta_days": float((t_eval_fwd[i] - t_obs_fwd[i]) * 365.0),
                     "t_obs_back_years": float(t_obs_back[i]),
-                    "t_snap_back_years": float(t_snap_back[i]),
+                    "t_eval_back_years": float(t_eval_back[i]),
                     "logI_spline_obs_med": S_obs_med[i],
                     "logI_spline_obs_lo": S_obs_lo[i],
                     "logI_spline_obs_hi": S_obs_hi[i],
-                    "logI_spline_snap_med": S_snap_med[i],
-                    "logI_spline_snap_lo": S_snap_lo[i],
-                    "logI_spline_snap_hi": S_snap_hi[i],
+                    "logI_spline_eval_med": S_eval_med[i],
+                    "logI_spline_eval_lo": S_eval_lo[i],
+                    "logI_spline_eval_hi": S_eval_hi[i],
                     "logI_true_obs": float(logI_true_obs[i]),
-                    "logI_true_snap": float(logI_true_snap[i]),
-                    "D_snap_spline_med": D_snap_spl_med[i],
-                    "D_snap_spline_lo": D_snap_spl_lo[i],
-                    "D_snap_spline_hi": D_snap_spl_hi[i],
-                    "D_snap_true": float(D_snap_true[i]),
+                    "logI_true_eval": float(logI_true_eval[i]),
+                    "D_grid_spline_med": D_grid_spl_med[i],
+                    "D_grid_spline_lo": D_grid_spl_lo[i],
+                    "D_grid_spline_hi": D_grid_spl_hi[i],
+                    "D_grid_true": float(D_grid_true[i]),
                     "B_infer_med": B_infer_med[i],
                     "B_infer_lo": B_infer_lo[i],
                     "B_infer_hi": B_infer_hi[i],
@@ -896,6 +924,7 @@ def compute_spline_snap_diagnostics(data, early_window_days=10):
         "grid_shifts_y": grid_shifts,
         "max_rateshift_y": max_rateshift,
         "early_window_days": early_window_days,
+        "grid_mode": grid_mode,
     }
 
 
@@ -906,31 +935,35 @@ def _deme_role_title(deme, starting_deme):
     return f"Deme {deme} ({role})"
 
 
-def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
-    """Produce snap-to-grid bias diagnostic figures + CSVs.
+def plot_spline_gridpoint_diagnostics(
+    data, output_dir, early_window_days=10, grid_mode="snap"
+):
+    """Produce grid-evaluation bias diagnostic figures + CSVs.
 
     Figures written (PNG + PDF each):
-      * ``spline_snap_headline_earlywindow.png``  — per deme: log prev (left y), log
+      * ``spline_grid_headline_earlywindow.png``  — per deme: log prev (left y), log
          wastewater (right y), x = days from simstart over the first
          ``early_window_days``. True I step function, posterior-median spline with
          95% HPD band, knots as filled circles, grid as rug ticks, obs as points
-         with dashed connectors from t_obs to t_snap.
-      * ``spline_snap_deltas_vs_time.png``       — 2x2 per deme: Δ_snap_spline and
-         Δ_snap_true vs time (full span); B_infer and B_total vs time.
-      * ``spline_snap_paired_scatter.png``       — per deme: logI_spline(t_snap)
-         vs logI_true(t_obs) with y=x; coloured by snap direction.
-      * ``spline_snap_histograms.png``           — per deme + pooled: distributions
-         of Δ_snap_spline, Δ_snap_true, B_infer, B_total with mean/median marks.
+         with dashed connectors showing the grid-evaluation displacement.
+      * ``spline_grid_deltas_vs_time.png``       — 2x2 per deme: Δ_grid_spline and
+         Δ_grid_true vs time (full span); B_infer and B_total vs time.
+      * ``spline_grid_paired_scatter.png``       — per deme: logI_spline(t_eval)
+         vs logI_true(t_obs) with y=x; coloured by eval direction.
+      * ``spline_grid_histograms.png``           — per deme + pooled: distributions
+         of Δ_grid_spline, Δ_grid_true, B_infer, B_total with mean/median marks.
 
     CSVs:
-      * ``spline_snap_per_obs.csv``              — every per-obs quantity
-      * ``spline_snap_summary.csv``              — per-deme + early-window summary
+      * ``spline_grid_per_obs.csv``              — every per-obs quantity
+      * ``spline_grid_summary.csv``              — per-deme + early-window summary
     """
     configure_pdf_fonts()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    out = compute_spline_snap_diagnostics(data, early_window_days=early_window_days)
+    out = compute_spline_gridpoint_diagnostics(
+        data, early_window_days=early_window_days, grid_mode=grid_mode
+    )
     if out is None:
         return None
     per_obs_df = out["per_obs_df"]
@@ -942,7 +975,8 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
     max_rateshift_y = out["max_rateshift_y"]
     starting_deme = data["starting_deme"]
 
-    per_obs_df.to_csv(output_dir / "spline_snap_per_obs.csv", index=False)
+    per_obs_df.to_csv(output_dir / "spline_grid_per_obs.csv", index=False)
+    mode_label = "snap-to-grid" if grid_mode == "snap" else "grid-interpolation"
     demes_ordered = [int(d) for d in _ordered_demes(data) if int(d) in dense]
     n_demes = len(demes_ordered)
     if n_demes == 0:
@@ -1039,11 +1073,11 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
                 label="True log I (step)",
             )
 
-        # Observations: vertical dashed connector t_obs -> t_snap
+        # Dashed connector from exact spline value to grid-evaluated value
         for _, obs in sub_early.iterrows():
             ax.plot(
-                [obs["t_obs_days"], obs["t_snap_days"]],
-                [obs["logI_spline_obs_med"], obs["logI_spline_snap_med"]],
+                [obs["t_obs_days"], obs["t_eval_days"]],
+                [obs["logI_spline_obs_med"], obs["logI_spline_eval_med"]],
                 color="grey",
                 lw=0.5,
                 ls="--",
@@ -1057,8 +1091,8 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
                 color="tab:blue",
             )
             ax.plot(
-                obs["t_snap_days"],
-                obs["logI_spline_snap_med"],
+                obs["t_eval_days"],
+                obs["logI_spline_eval_med"],
                 marker="s",
                 ms=3,
                 color="tab:red",
@@ -1084,7 +1118,7 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
         ax.set_ylabel("log prevalence")
         ax.set_title(
             _deme_role_title(deme, starting_deme)
-            + " — first {}d: spline vs truth + snap".format(early_window_days)
+            + f" \u2014 first {early_window_days}d: spline vs truth ({mode_label})"
         )
 
         # Twin axis: log wastewater
@@ -1114,7 +1148,7 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
     if headline_demes:
         fig_h.tight_layout()
         save_figure_png_and_pdf(
-            str(output_dir / "spline_snap_headline_earlywindow.png")
+            str(output_dir / "spline_grid_headline_earlywindow.png")
         )
     plt.close(fig_h)
 
@@ -1129,30 +1163,33 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
         ax.axvspan(0, early_window_days, color="gold", alpha=0.08, label="early window")
         ax.errorbar(
             t,
-            sub["D_snap_spline_med"],
+            sub["D_grid_spline_med"],
             yerr=[
-                sub["D_snap_spline_med"] - sub["D_snap_spline_lo"],
-                sub["D_snap_spline_hi"] - sub["D_snap_spline_med"],
+                sub["D_grid_spline_med"] - sub["D_grid_spline_lo"],
+                sub["D_grid_spline_hi"] - sub["D_grid_spline_med"],
             ],
             fmt="o",
             ms=3,
             color="tab:blue",
             alpha=0.8,
             elinewidth=0.6,
-            label=r"$\Delta_{snap,spline}$ = $\hat{S}(t_{obs}) - \hat{S}(t_{snap})$",
+            label=r"$\Delta_{grid,spline}$ = $\hat{S}(t_{obs}) - \hat{S}(t_{eval})$",
         )
         ax.scatter(
             t,
-            sub["D_snap_true"],
+            sub["D_grid_true"],
             s=14,
             marker="x",
             color="tab:green",
             alpha=0.85,
-            label=r"$\Delta_{snap,true}$ = $\log I_{true}(t_{obs}) - \log I_{true}(t_{snap})$",
+            label=r"$\Delta_{grid,true}$ = $\log I_{true}(t_{obs}) - \log I_{true}(t_{eval})$",
         )
         ax.set_xlabel("Days from simulation start")
-        ax.set_ylabel("log-prev difference (snap error)")
-        ax.set_title(_deme_role_title(deme, starting_deme) + " — snap deltas")
+        ax.set_ylabel("log-prev difference (grid-eval error)")
+        ax.set_title(
+            _deme_role_title(deme, starting_deme)
+            + f" \u2014 grid deltas ({mode_label})"
+        )
         ax.legend(fontsize=7, loc="best")
 
         ax = axes_d[row_idx, 1]
@@ -1184,74 +1221,75 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
             color="tab:red",
             alpha=0.75,
             elinewidth=0.6,
-            label=r"$B_{total}$ = $\hat{S}(t_{snap}) - \log I_{true}(t_{obs})$",
+            label=r"$B_{total}$ = $\hat{S}(t_{eval}) - \log I_{true}(t_{obs})$",
         )
         ax.set_xlabel("Days from simulation start")
         ax.set_ylabel("log-prev bias")
         ax.set_title(
-            _deme_role_title(deme, starting_deme) + " — inference vs total bias"
+            _deme_role_title(deme, starting_deme)
+            + f" \u2014 inference vs total bias ({mode_label})"
         )
         ax.legend(fontsize=7, loc="best")
 
     fig_d.tight_layout()
-    save_figure_png_and_pdf(str(output_dir / "spline_snap_deltas_vs_time.png"))
+    save_figure_png_and_pdf(str(output_dir / "spline_grid_deltas_vs_time.png"))
     plt.close(fig_d)
 
-    # ---------- Paired scatter: Ŝ(t_snap) vs logI_true(t_obs) ----------
+    # ---------- Paired scatter: Ŝ(t_eval) vs logI_true(t_obs) ----------
     fig_p, axes_p = plt.subplots(1, n_demes, figsize=(5 * n_demes, 4.5), squeeze=False)
     for col_idx, deme in enumerate(demes_ordered):
         ax = axes_p[0, col_idx]
         sub = per_obs_df[per_obs_df["deme"] == deme]
         early_mask = sub["t_obs_days"] <= early_window_days
-        snap_dir = np.where(
-            sub["snap_delta_days"] > 0,
-            "snap forward (later)",
-            np.where(sub["snap_delta_days"] < 0, "snap backward (earlier)", "exact"),
+        eval_dir = np.where(
+            sub["eval_delta_days"] > 0,
+            "eval forward (later)",
+            np.where(sub["eval_delta_days"] < 0, "eval backward (earlier)", "exact"),
         )
-        # Whole-timeseries scatter
         for label, colour, marker in [
-            ("snap forward (later)", "tab:red", "^"),
-            ("snap backward (earlier)", "tab:blue", "v"),
+            ("eval forward (later)", "tab:red", "^"),
+            ("eval backward (earlier)", "tab:blue", "v"),
             ("exact", "black", "o"),
         ]:
-            m = snap_dir == label
+            m = eval_dir == label
             if m.sum():
                 ax.scatter(
                     sub.loc[m, "logI_true_obs"],
-                    sub.loc[m, "logI_spline_snap_med"],
+                    sub.loc[m, "logI_spline_eval_med"],
                     s=22,
                     marker=marker,
                     color=colour,
                     alpha=0.75,
                     label=label,
                 )
-        # Highlight early window
         if early_mask.any():
             ax.scatter(
                 sub.loc[early_mask, "logI_true_obs"],
-                sub.loc[early_mask, "logI_spline_snap_med"],
+                sub.loc[early_mask, "logI_spline_eval_med"],
                 s=70,
                 facecolors="none",
                 edgecolors="gold",
                 lw=1.2,
                 label=f"first {early_window_days} d",
             )
-        lo = min(sub["logI_true_obs"].min(), sub["logI_spline_snap_med"].min())
-        hi = max(sub["logI_true_obs"].max(), sub["logI_spline_snap_med"].max())
+        lo = min(sub["logI_true_obs"].min(), sub["logI_spline_eval_med"].min())
+        hi = max(sub["logI_true_obs"].max(), sub["logI_spline_eval_med"].max())
         ax.plot([lo, hi], [lo, hi], ls="--", color="grey", lw=0.8, label="y = x")
         ax.set_xlabel(r"$\log I_{true}(t_{obs})$")
-        ax.set_ylabel(r"$\hat{S}(t_{snap})$ (posterior median)")
-        ax.set_title(_deme_role_title(deme, starting_deme))
+        ax.set_ylabel(r"$\hat{S}(t_{eval})$ (posterior median)")
+        ax.set_title(
+            _deme_role_title(deme, starting_deme) + f" ({mode_label})"
+        )
         ax.legend(fontsize=7, loc="best")
 
     fig_p.tight_layout()
-    save_figure_png_and_pdf(str(output_dir / "spline_snap_paired_scatter.png"))
+    save_figure_png_and_pdf(str(output_dir / "spline_grid_paired_scatter.png"))
     plt.close(fig_p)
 
     # ---------- Histograms (per deme, per quantity; full span + early window) ----------
     quantities = [
-        ("D_snap_spline_med", r"$\Delta_{snap,spline}$", "tab:blue"),
-        ("D_snap_true", r"$\Delta_{snap,true}$", "tab:green"),
+        ("D_grid_spline_med", r"$\Delta_{grid,spline}$", "tab:blue"),
+        ("D_grid_true", r"$\Delta_{grid,true}$", "tab:green"),
         ("B_infer_med", r"$B_{infer}$", "tab:orange"),
         ("B_total_med", r"$B_{total}$", "tab:red"),
     ]
@@ -1315,7 +1353,7 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
                 )
             ax.legend(fontsize=6, loc="best")
     fig_h2.tight_layout()
-    save_figure_png_and_pdf(str(output_dir / "spline_snap_histograms.png"))
+    save_figure_png_and_pdf(str(output_dir / "spline_grid_histograms.png"))
     plt.close(fig_h2)
 
     # ---------- Summary CSV ----------
@@ -1333,9 +1371,9 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
         ]:
             if sub.empty:
                 continue
-            snap_fwd = (sub["snap_delta_days"] > 0).sum()
-            snap_back = (sub["snap_delta_days"] < 0).sum()
-            snap_exact = (sub["snap_delta_days"] == 0).sum()
+            eval_fwd = (sub["eval_delta_days"] > 0).sum()
+            eval_back = (sub["eval_delta_days"] < 0).sum()
+            eval_exact = (sub["eval_delta_days"] == 0).sum()
 
             def _stat(series):
                 a = series.dropna().to_numpy()
@@ -1350,6 +1388,7 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
 
             row = {
                 "deme": deme,
+                "grid_mode": grid_mode,
                 "role": (
                     "start"
                     if data["starting_deme"] is not None
@@ -1358,13 +1397,13 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
                 ),
                 "window": window_label,
                 "n_obs": int(sub.shape[0]),
-                "snap_forward": int(snap_fwd),
-                "snap_backward": int(snap_back),
-                "snap_exact": int(snap_exact),
+                "eval_forward": int(eval_fwd),
+                "eval_backward": int(eval_back),
+                "eval_exact": int(eval_exact),
             }
             for col_name, series in [
-                ("D_snap_spline", sub["D_snap_spline_med"]),
-                ("D_snap_true", sub["D_snap_true"]),
+                ("D_grid_spline", sub["D_grid_spline_med"]),
+                ("D_grid_true", sub["D_grid_true"]),
                 ("B_infer", sub["B_infer_med"]),
                 ("B_total", sub["B_total_med"]),
             ]:
@@ -1375,7 +1414,7 @@ def plot_spline_snap_diagnostics(data, output_dir, early_window_days=10):
             summary_rows.append(row)
 
     pd.DataFrame(summary_rows).to_csv(
-        output_dir / "spline_snap_summary.csv", index=False
+        output_dir / "spline_grid_summary.csv", index=False
     )
     return per_obs_df
 
@@ -2176,21 +2215,22 @@ def main():
         ),
     )
     local_parser.add_argument(
-        "--spline_snap_diagnostics_out",
+        "--spline_gridpoint_diagnostics_out",
         type=str,
         default=None,
         help=(
-            "If set, write spline snap-to-grid diagnostics into this directory: "
-            "posterior spline vs truth zoom plot, Δ/B vs time plots, "
-            "paired scatter, histograms, plus spline_snap_per_obs.csv and "
-            "spline_snap_summary.csv."
+            "If set, write spline grid-evaluation diagnostics into this "
+            "directory: posterior spline vs truth zoom plot, Δ/B vs time "
+            "plots, paired scatter, histograms, plus spline_grid_per_obs.csv "
+            "and spline_grid_summary.csv.  The evaluation method (snap vs "
+            "interpolate) is controlled by --ww_ppc_grid_mode."
         ),
     )
     local_parser.add_argument(
-        "--spline_snap_early_window_days",
+        "--spline_gridpoint_early_window_days",
         type=float,
         default=10.0,
-        help="Early-window cutoff in days for spline snap diagnostics (default 10).",
+        help="Early-window cutoff in days for spline gridpoint diagnostics (default 10).",
     )
     local_parser.add_argument(
         "--ww_ppc_out",
@@ -2220,7 +2260,9 @@ def main():
         choices=["snap", "interpolate"],
         default="snap",
         help=(
-            "How to evaluate prevalence at each wastewater observation time. "
+            "How to evaluate prevalence at each wastewater observation time.  "
+            "Affects both the wastewater PPC (--ww_ppc_out) and the spline "
+            "gridpoint diagnostics (--spline_gridpoint_diagnostics_out).  "
             "'snap' uses the value at the nearest grid point (earlier BEAST "
             "likelihood). 'interpolate' linearly interpolates between the two "
             "bracketing grid-point spline values (newer BEAST likelihood). "
@@ -2243,11 +2285,12 @@ def main():
         plot_wastewater_residual_diagnostics(
             data, local_args.ww_diagnostics_out, time_unit="days"
         )
-    if local_args.spline_snap_diagnostics_out is not None:
-        plot_spline_snap_diagnostics(
+    if local_args.spline_gridpoint_diagnostics_out is not None:
+        plot_spline_gridpoint_diagnostics(
             data,
-            local_args.spline_snap_diagnostics_out,
-            early_window_days=local_args.spline_snap_early_window_days,
+            local_args.spline_gridpoint_diagnostics_out,
+            early_window_days=local_args.spline_gridpoint_early_window_days,
+            grid_mode=local_args.ww_ppc_grid_mode,
         )
     if local_args.ww_ppc_out is not None:
         plot_wastewater_ppc(
