@@ -483,7 +483,7 @@ def plot_sigma_tilde_true_vs_n(df_all, output_path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
-        "--results_dir", default="simulation_study/results",
+        "--results_dir", required=True,
         help="Root results dir with 1_remaster_sim/ and 2_mascot/.",
     )
     parser.add_argument(
