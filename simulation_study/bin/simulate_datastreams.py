@@ -41,6 +41,7 @@ Let N = population size.
   (Variance = μ + α·μ²; α = nb_dispersion)
 """
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -54,7 +55,29 @@ from plot_utils import get_outbreak_start_deme, t_first_infected_in_deme
 # =============================================================
 # Constants
 # =============================================================
+# Fallback seed used only when a low-level simulate_* function is invoked
+# directly without an rng argument. The pipeline derives independent per-sim
+# streams via _seed_sequence_for_sim below.
 DEFAULT_SEED: int = 42
+
+
+def _seed_sequence_for_sim(
+    out_prefix: Path, override: Optional[int] = None
+) -> np.random.SeedSequence:
+    """SeedSequence keyed on the sim identity so each run gets an independent
+    stream while staying reproducible from the sim id alone.
+
+    Why: hard-coding the same seed in every run_pipeline call gave every sim
+    the same standardised noise prefix, so ensemble statistics (e.g. fraction
+    of sims with σ̃_true / σ_true below the χ² band) were not iid Bernoulli
+    across sims. Hashing the out_prefix basename gives independence between
+    sims; ``--seed`` overrides the derivation when an explicit seed is wanted.
+    """
+    if override is not None:
+        return np.random.SeedSequence(entropy=int(override))
+    name = Path(out_prefix).name
+    digest = hashlib.sha256(name.encode("utf-8")).digest()
+    return np.random.SeedSequence(entropy=int.from_bytes(digest[:8], "big"))
 
 
 def plot_trajectories(
@@ -675,6 +698,7 @@ def run_pipeline(
     params_csv: Path,
     out_prefix: Path,
     constrain_to_first_detection: bool = False,
+    seed: Optional[int] = None,
 ) -> None:
     """Run the full simulation and plotting pipeline.
 
@@ -685,6 +709,9 @@ def run_pipeline(
         constrain_to_first_detection: If True, restrict wastewater/seroprevalence/case_counts
             to time points from first detection of infection in the deme onward; demes that
             never have infection are omitted from exports.
+        seed: Optional explicit seed. If None, the per-sim seed is derived
+            deterministically from ``out_prefix`` so each sim gets an
+            independent rng stream while staying reproducible.
     """
     # Read input
     if not traj_file.exists():
@@ -757,11 +784,16 @@ def run_pipeline(
 
     constrain = constrain_to_first_detection
 
+    # Independent rng stream per datastream, keyed on the sim identity (or on
+    # an explicit --seed). spawn() guarantees the three streams are
+    # statistically independent.
+    ss_ww, ss_sp, ss_cc = _seed_sequence_for_sim(out_prefix, override=seed).spawn(3)
+
     # --- Wastewater ---
     sigma = ds_params.loc[ds_params["parameter"] == "ds_ww_sigma", "value"].values[0]
     if sigma is None:
         raise ValueError("No sigma parameter found in parameters CSV")
-    rng_ww = np.random.default_rng(DEFAULT_SEED)
+    rng_ww = np.random.default_rng(ss_ww)
 
     def _sim_wastewater(tmp, sample, index):
         scaling = ds_params.loc[
@@ -781,7 +813,7 @@ def run_pipeline(
     )
 
     # --- Seroprevalence ---
-    rng_sp = np.random.default_rng(DEFAULT_SEED)
+    rng_sp = np.random.default_rng(ss_sp)
 
     def _sim_seroprevalence(tmp, sample, index):
         scaling = ds_params.loc[
@@ -801,7 +833,7 @@ def run_pipeline(
     )
 
     # --- Case counts ---
-    rng_cc = np.random.default_rng(DEFAULT_SEED)
+    rng_cc = np.random.default_rng(ss_cc)
     dispersion = ds_params.loc[
         ds_params["parameter"] == "ds_cc_dispersion", "value"
     ].values[0]
@@ -910,6 +942,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Restrict datastreams to times from first infection detection per deme; omit demes that never have infection.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Explicit integer seed. Default: derived per-sim from --out_prefix so each sim gets an independent rng stream.",
+    )
 
     return parser.parse_args()
 
@@ -921,6 +959,7 @@ def main() -> None:
         args.params_csv,
         args.out_prefix,
         constrain_to_first_detection=args.constrain_to_first_detection,
+        seed=args.seed,
     )
 
 
