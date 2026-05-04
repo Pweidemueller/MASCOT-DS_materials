@@ -260,7 +260,7 @@ process COMBINE_LOGS {
 
 process COMBINE_TREES {
     tag "${xmlname}"
-    publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy'
+    // Not published: combined.trees is large (~18MB × 700) and only consumed by ANNOTATE_TREES → mcc.trees
 
     input:
     tuple val(xmlname), path(trees), val(base_name), val(variant_type)
@@ -277,13 +277,13 @@ process COMBINE_TREES {
 
 process ANNOTATE_TREES {
     tag "${xmlname}"
-    publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy'
+    publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy', pattern: '*.mcc.trees'
 
     input:
     tuple val(base_name), val(variant_type), val(xmlname), path(combined_trees)
 
     output:
-    tuple val(base_name), val(variant_type), val(xmlname), path("${xmlname}.combined.trees"), path("${xmlname}.mcc.trees"), emit: annotated_trees
+    tuple val(base_name), val(variant_type), val(xmlname), path("${xmlname}.mcc.trees"), emit: annotated_trees
 
     script:
     """
@@ -296,7 +296,7 @@ process PLOT_TREES_MASCOT {
     publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy'
 
     input:
-    tuple val(base_name), val(variant_type), val(xmlname), path(combined_trees), path(mcc_tree)
+    tuple val(base_name), val(variant_type), val(xmlname), path(mcc_tree)
 
     output:
     path("${mcc_tree.baseName}_tree_*.png"), emit: tree_plot
@@ -312,7 +312,7 @@ process PLOT_TREES_MASCOT {
 // [1.9] Uses val(meta) map pattern instead of unwieldy 15-element tuple
 process ANALYSE_POSTERIORS {
     tag "${meta.base}_${meta.variant}"
-    publishDir "${params.outdir}/3_analysis/${meta.base}/${meta.variant}", mode: 'copy'
+    publishDir "${params.outdir}/3_analysis/${meta.base}/${meta.variant}", mode: 'copy', pattern: '*.{pdf,csv}'
 
     input:
     tuple val(meta), path(log_original), path(log_datastream), path(log_nedyn_deme1), path(log_nedyn_deme2), path(log_cuminc_deme1), path(log_cuminc_deme2), path(params_csv), path(traj), path(case_counts), path(seroprevalence), path(wastewater), path(deme_switches_csv)
@@ -372,7 +372,7 @@ process CONCATENATE_HPD_VALIDATION {
 
 process PLOT_HPD_VALIDATION {
     tag "HPD validation plots"
-    publishDir "${params.outdir}/3_analysis", mode: 'copy'
+    publishDir "${params.outdir}/3_analysis", mode: 'copy', pattern: '*.pdf'
 
     input:
     tuple val(variant), path(prevalence_csv), path(ne_csv), path(cumulative_incidence_csv), path(params_csv), path(migration_rates_csv)
@@ -442,7 +442,7 @@ process AGGREGATE_ESS {
 
 process PLOT_ESS_HEATMAP {
     tag "ESS heatmap"
-    publishDir "${params.outdir}/4_ess", mode: 'copy'
+    publishDir "${params.outdir}/4_ess", mode: 'copy', pattern: '*.pdf'
 
     input:
     tuple val(variant), path(original_ess_summary), path(variant_ess_summary)
@@ -466,7 +466,7 @@ process PLOT_ESS_HEATMAP {
 // Same inputs as ANALYSE_POSTERIORS — reuses parse_arguments() from analyse_posteriors.py
 process MAKE_INDIVIDUAL_SIM_FIGURES {
     tag "${meta.base}_${meta.variant}"
-    publishDir "${params.outdir}/3_analysis/${meta.base}/${meta.variant}", mode: 'copy'
+    publishDir "${params.outdir}/3_analysis/${meta.base}/${meta.variant}", mode: 'copy', pattern: '*.{pdf,csv}'
 
     input:
     tuple val(meta), path(log_original), path(log_datastream), path(log_nedyn_deme1), path(log_nedyn_deme2), path(log_cuminc_deme1), path(log_cuminc_deme2), path(params_csv), path(traj), path(case_counts), path(seroprevalence), path(wastewater), path(deme_switches_csv)
