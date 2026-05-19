@@ -1,9 +1,11 @@
 # Test MASCOTdatastreams on structured SIR outbreaks
 
-TO DO
-- [ ] in `create_birthdeath_simXML.py` the sampling_rate is a bit of a misnomer, the parameter is more like a sampling probability which then `gamma * sampling_rate` leads to a true rate as used in Remaster
-
 This repository contains a Nextflow pipeline that simulates structured SIR outbreaks (ReMASTER), simulates additional datastreams (e.g. case counts) from simulated trajectories, and performs structured coalescent inference with BEAST2/MASCOT (with and without datastreams). This README explains the modeling logic and assumptions.
+
+## TO DO
+- [ ] in `create_birthdeath_simXML.py` the sampling_rate is a bit of a misnomer, the parameter is more like a sampling probability which then `gamma * sampling_rate` leads to a true rate as used in Remaster
+- [ ] MAKE_MASCOT_XML runs 7 variant types per simulation (original plus six datastreams_* variants), but they all write the same output name: {nexus.baseName}_state_time.csv (e.g. 96_2_simulation_state_time.csv) and then publish to the same directory via the second publishDir. To silence the noise you could use overwrite: true on that publishDir, publish state_time only once (e.g. from datastreams), or give each variant a distinct filename — only needed if content ever differs.
+
 
 ## Workflow logic
 The pipeline in `main.nf` runs these steps:

@@ -377,6 +377,111 @@ def apply_onlytree_operators_and_priors(root):
         prior_dist.append(prior_elem)
 
 
+def _compute_forward_migration_indices(dim):
+    """
+    Build flat-index lookup dirs[(source, dest)] for the forwardsMigration parameter.
+
+    The flat vector has dim*(dim-1) entries indexed by iterating
+    source=0..dim-1, dest=0..dim-1, skipping source==dest.
+    """
+    dirs = {}
+    counter = 0
+    for source in range(dim):
+        for dest in range(dim):
+            if source != dest:
+                dirs[(source, dest)] = counter
+                counter += 1
+    return dirs
+
+
+def _wire_migration_into_ne_dynamics(root):
+    """
+    Add otherSpline, incomingForwardMigration, and forwardMigrationIndices
+    child elements to each SplinePrevalenceToNe so that Ne is computed from
+    the local (intra-deme) transmission rate β^local.
+
+    Idempotent: skips demes that already have incomingForwardMigration wired.
+    """
+    ne_dynamics_list = root.find(".//*[@id='NeDynamicsList.t:SimDataset']")
+    if ne_dynamics_list is None:
+        return
+
+    ne_dynamics_elems = ne_dynamics_list.findall("neDynamics")
+    dim = len(ne_dynamics_elems)
+    if dim < 2:
+        return
+
+    deme_names = []
+    spline_ids = []
+    for elem in ne_dynamics_elems:
+        eid = elem.attrib.get("id", "")
+        deme_name = eid.split(".")[1] if len(eid.split(".")) >= 3 else eid
+        deme_names.append(deme_name)
+
+        spline_elem = elem.find("spline")
+        if spline_elem is not None:
+            spline_ids.append(spline_elem.attrib.get("id", ""))
+        else:
+            spline_ids.append(f"splinePrev.{deme_name}.t:SimDataset")
+
+    dirs = _compute_forward_migration_indices(dim)
+
+    for i, ne_elem in enumerate(ne_dynamics_elems):
+        if ne_elem.find("incomingForwardMigration") is not None:
+            continue
+
+        other_indices = []
+        for j in range(dim):
+            if j == i:
+                continue
+            other_spline = ET.SubElement(ne_elem, "otherSpline")
+            other_spline.set("idref", spline_ids[j])
+            other_indices.append(str(dirs[(j, i)]))
+
+        incoming_mig = ET.SubElement(ne_elem, "incomingForwardMigration")
+        incoming_mig.set("idref", "migrationRatesSkyline.t:SimDataset")
+
+        fwd_mig_idx = ET.SubElement(ne_elem, "forwardMigrationIndices")
+        fwd_mig_idx.set("id", f"fwdMigIdx.{deme_names[i]}.t:SimDataset")
+        fwd_mig_idx.set("spec", "parameter.IntegerParameter")
+        fwd_mig_idx.set("estimate", "false")
+        fwd_mig_idx.text = " ".join(other_indices)
+
+
+def _add_local_transmission_priors(root):
+    """
+    Add a LocalTransmissionSmallerThan prior per deme so MCMC rejects
+    states where β^local ≤ 0 anywhere on the spline grid.
+
+    Idempotent: skips demes whose prior already exists in the tree.
+    """
+    ne_dynamics_list = root.find(".//*[@id='NeDynamicsList.t:SimDataset']")
+    if ne_dynamics_list is None:
+        return
+
+    ne_dynamics_elems = ne_dynamics_list.findall("neDynamics")
+    if len(ne_dynamics_elems) < 2:
+        return
+
+    prior_dist = root.find(".//*[@id='prior']")
+    if prior_dist is None:
+        return
+
+    for ne_elem in ne_dynamics_elems:
+        ne_id = ne_elem.attrib.get("id", "")
+        deme_name = ne_id.split(".")[1] if len(ne_id.split(".")) >= 3 else ne_id
+        prior_id = f"regularizeLocalTransmissionRate.{deme_name}.t:SimDataset"
+
+        if root.find(f".//*[@id='{prior_id}']") is not None:
+            continue
+
+        dist_elem = ET.SubElement(prior_dist, "distribution")
+        dist_elem.set("id", prior_id)
+        dist_elem.set("spec", "mascotdatastreams.util.LocalTransmissionSmallerThan")
+        dynamics_ref = ET.SubElement(dist_elem, "dynamics")
+        dynamics_ref.set("idref", ne_id)
+
+
 def _replace_xml_element(root, tag, element_id, new_xml_str):
     """Find an XML element by tag and id, replace it in-place with new XML string."""
     for parent in root.iter():
@@ -574,6 +679,11 @@ def replace_blocks_template(
         _inject_datastream_params(
             root, gamma, case_counts_by_deme, seroprevalence_by_deme, wastewater_by_deme
         )
+
+    # Wire β^local migration decomposition and local transmission priors
+    if is_datastream_template:
+        _wire_migration_into_ne_dynamics(root)
+        _add_local_transmission_priors(root)
 
     # Remove excluded elements and handle onlytree variant
     if exclude_case_counts or exclude_seroprevalence or exclude_wastewater:
