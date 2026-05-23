@@ -1563,6 +1563,7 @@ def plot_hpd_validation_scatter(
     in_hpd_color="#e69d00",
     offset_fraction=0.1,
     marker_size=10,
+    scatter_y_override=None,
 ):
     """
     Plot scatter points above the plot to indicate HPD validation results.
@@ -1594,7 +1595,10 @@ def plot_hpd_validation_scatter(
     ylim = ax.get_ylim()
     max_val = ylim[1]
     y_range = ylim[1] - ylim[0]
-    scatter_y = max_val + offset_fraction * y_range
+    if scatter_y_override is not None:
+        scatter_y = scatter_y_override
+    else:
+        scatter_y = max_val + offset_fraction * y_range
 
     # Get data
     times_plot = deme_validation["timesincestart"] * time_factor
@@ -2181,6 +2185,7 @@ def _plot_cumincidence_panel(
     fontsizes=None,
     fontsize_tick=None,
     show_legend=True,
+    pin_band_above_sero_one=False,
 ):
     """
     Draw the cumulative incidence panel (subplot 3) for a single deme on the given axis.
@@ -2257,6 +2262,10 @@ def _plot_cumincidence_panel(
                 fontsize_tick=fontsize_tick,
             )
 
+    scatter_y_override = None
+    if pin_band_above_sero_one and deme_popsizes is not None and deme in deme_popsizes:
+        scatter_y_override = float(deme_popsizes[deme]) * 1.04
+
     plot_hpd_validation_scatter(
         ax,
         validation_data_datastreams_cumIncidence,
@@ -2266,6 +2275,7 @@ def _plot_cumincidence_panel(
         in_hpd_color=COLORS[3],
         offset_fraction=0.05,
         marker_size=10,
+        scatter_y_override=scatter_y_override,
     )
 
     margin_frac = 0.05

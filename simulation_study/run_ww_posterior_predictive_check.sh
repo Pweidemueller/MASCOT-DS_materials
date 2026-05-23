@@ -34,7 +34,7 @@ export WW_PPC_RUNTIME WW_PPC_CONDA_ENV WW_PPC_APPTAINER_IMAGE
 # has spare cores.
 : "${WW_PPC_JOBS:=4}"
 
-ls "$BASE/2_mascot/" | xargs -n1 -P"$WW_PPC_JOBS" bash run_ww_ppc_single.sh \
+ls "$BASE/2_mascot/" | xargs -n1 -P"$WW_PPC_JOBS" bash simulation_study/run_ww_ppc_single.sh \
   || echo "[warn] one or more sims failed; see sandbox/ww_ppc_allsims/<sim>/run.log"
 
 "${PYTHON_CMD[@]}" simulation_study/bin/analyse_ww_ppc_crosssim.py \

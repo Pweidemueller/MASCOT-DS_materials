@@ -151,6 +151,8 @@ def run_per_deme_figures(data, args, time_unit="days"):
                 "validation_data_datastreams_cumIncidence"
             ],
             deme_popsizes=data["deme_popsizes"],
+            show_legend=False,
+            pin_band_above_sero_one=True,
             **common_kw,
         )
         ax.set_title(None)
