@@ -267,8 +267,13 @@ def remove_excluded_datastream_elements(
 
     # Remove parameter references from operators
     for operator in root.findall(".//operator"):
-        for tag in ["parameter", "upLogParameter", "downRealParameter",
-                     "upRealParameter", "downLogParameter"]:
+        for tag in [
+            "parameter",
+            "upLogParameter",
+            "downRealParameter",
+            "upRealParameter",
+            "downLogParameter",
+        ]:
             for elem in list(operator.findall(f".//{tag}[@idref]")):
                 if _matches(elem.attrib.get("idref", ""), active_param_patterns):
                     for parent in operator.iter():
@@ -377,6 +382,126 @@ def apply_onlytree_operators_and_priors(root):
         prior_dist.append(prior_elem)
 
 
+def _compute_forward_migration_indices(dim):
+    """
+    Build flat-index lookup dirs[(source, dest)] for the forwardsMigration parameter.
+
+    The flat vector has dim*(dim-1) entries indexed by iterating
+    source=0..dim-1, dest=0..dim-1, skipping source==dest.
+    """
+    dirs = {}
+    counter = 0
+    for source in range(dim):
+        for dest in range(dim):
+            if source != dest:
+                dirs[(source, dest)] = counter
+                counter += 1
+    return dirs
+
+
+def _wire_migration_into_ne_dynamics(root):
+    """
+    Add otherSpline, incomingForwardMigration, and forwardMigrationIndices
+    child elements to each SplinePrevalenceToNe so that Ne is computed from
+    the local (intra-deme) transmission rate β^local.
+
+    Idempotent: skips demes that already have incomingForwardMigration wired.
+    """
+    ne_dynamics_list = root.find(".//*[@id='NeDynamicsList.t:SimDataset']")
+    if ne_dynamics_list is None:
+        return
+
+    ne_dynamics_elems = ne_dynamics_list.findall("neDynamics")
+    dim = len(ne_dynamics_elems)
+    if dim < 2:
+        return
+
+    deme_names = []
+    spline_ids = []
+    for elem in ne_dynamics_elems:
+        eid = elem.attrib.get("id", "")
+        deme_name = eid.split(".")[1] if len(eid.split(".")) >= 3 else eid
+        deme_names.append(deme_name)
+
+        spline_elem = elem.find("spline")
+        if spline_elem is not None:
+            spline_ids.append(spline_elem.attrib.get("id", ""))
+        else:
+            spline_ids.append(f"splinePrev.{deme_name}.t:SimDataset")
+
+    dirs = _compute_forward_migration_indices(dim)
+
+    for i, ne_elem in enumerate(ne_dynamics_elems):
+        if ne_elem.find("incomingForwardMigration") is not None:
+            continue
+
+        other_indices = []
+        for j in range(dim):
+            if j == i:
+                continue
+            other_spline = ET.SubElement(ne_elem, "otherSpline")
+            other_spline.set("idref", spline_ids[j])
+            other_indices.append(str(dirs[(j, i)]))
+
+        incoming_mig = ET.SubElement(ne_elem, "incomingForwardMigration")
+        incoming_mig.set("idref", "migrationRatesSkyline.t:SimDataset")
+
+        fwd_mig_idx = ET.SubElement(ne_elem, "forwardMigrationIndices")
+        fwd_mig_idx.set("id", f"fwdMigIdx.{deme_names[i]}.t:SimDataset")
+        fwd_mig_idx.set("spec", "parameter.IntegerParameter")
+        fwd_mig_idx.set("estimate", "false")
+        fwd_mig_idx.text = " ".join(other_indices)
+
+
+def _add_local_transmission_priors(root):
+    """
+    Add a LocalTransmissionSmallerThan prior per deme so MCMC rejects
+    states where β^local ≤ 0 anywhere on the spline grid.
+
+    The new priors are inserted immediately after the existing
+    regularizeTransmissionRate.* distributions in the <prior> compound, so the
+    two families sit next to each other at the top of the prior block.
+
+    Idempotent: skips demes whose prior already exists in the tree.
+    """
+    ne_dynamics_list = root.find(".//*[@id='NeDynamicsList.t:SimDataset']")
+    if ne_dynamics_list is None:
+        return
+
+    ne_dynamics_elems = ne_dynamics_list.findall("neDynamics")
+    if len(ne_dynamics_elems) < 2:
+        return
+
+    prior_dist = root.find(".//*[@id='prior']")
+    if prior_dist is None:
+        return
+
+    # Find the insertion index: position right after the last child whose id
+    # starts with "regularizeTransmissionRate". Fall back to position 0 if none
+    # are present (shouldn't happen with the current template, but harmless).
+    children = list(prior_dist)
+    insert_idx = 0
+    for i, child in enumerate(children):
+        if child.attrib.get("id", "").startswith("regularizeTransmissionRate"):
+            insert_idx = i + 1
+
+    for ne_elem in ne_dynamics_elems:
+        ne_id = ne_elem.attrib.get("id", "")
+        deme_name = ne_id.split(".")[1] if len(ne_id.split(".")) >= 3 else ne_id
+        prior_id = f"regularizeLocalTransmissionRate.{deme_name}.t:SimDataset"
+
+        if root.find(f".//*[@id='{prior_id}']") is not None:
+            continue
+
+        dist_elem = ET.Element("distribution")
+        dist_elem.set("id", prior_id)
+        dist_elem.set("spec", "mascotdatastreams.util.LocalTransmissionSmallerThan")
+        dynamics_ref = ET.SubElement(dist_elem, "dynamics")
+        dynamics_ref.set("idref", ne_id)
+        prior_dist.insert(insert_idx, dist_elem)
+        insert_idx += 1  # keep deme order consistent (Deme1 before Deme2)
+
+
 def _replace_xml_element(root, tag, element_id, new_xml_str):
     """Find an XML element by tag and id, replace it in-place with new XML string."""
     for parent in root.iter():
@@ -392,12 +517,17 @@ def _inject_traits(root, trait_block, type_trait_block, infer_tree=False):
     """Replace the dateTrait and typeTraitSet blocks in the template."""
     if infer_tree:
         _replace_xml_element(root, "trait", "dateTrait.t:SimDataset", trait_block)
-    _replace_xml_element(root, "typeTrait", "typeTraitSet.t:SimDataset", type_trait_block)
+    _replace_xml_element(
+        root, "typeTrait", "typeTraitSet.t:SimDataset", type_trait_block
+    )
 
 
 # Mapping from XML parameter id prefix -> (datastream dict key for values, datastream dict key for times)
 _DATASTREAM_PARAM_MAP = {
-    "caseCounts.": ("case_counts_by_deme", [("caseCounts.", "counts"), ("caseTimes.", "times")]),
+    "caseCounts.": (
+        "case_counts_by_deme",
+        [("caseCounts.", "counts"), ("caseTimes.", "times")],
+    ),
     "seroTestedCounts.": (
         "seroprevalence_by_deme",
         [
@@ -408,12 +538,17 @@ _DATASTREAM_PARAM_MAP = {
     ),
     "wastewaterConcentration.": (
         "wastewater_by_deme",
-        [("wastewaterConcentration.", "wastewater"), ("wastewaterConcentrationTimes.", "times")],
+        [
+            ("wastewaterConcentration.", "wastewater"),
+            ("wastewaterConcentrationTimes.", "times"),
+        ],
     ),
 }
 
 
-def _inject_datastream_params(root, gamma, case_counts_by_deme, seroprevalence_by_deme, wastewater_by_deme):
+def _inject_datastream_params(
+    root, gamma, case_counts_by_deme, seroprevalence_by_deme, wastewater_by_deme
+):
     """Update <state> parameter values for case counts, seroprevalence, and wastewater."""
     sources = {
         "case_counts_by_deme": case_counts_by_deme,
@@ -456,11 +591,22 @@ def _configure_rate_shifts(root, max_age, min_age):
 
     spline_grid = root.find(".//gridRateShifts[@id='SplineGridRateShifts']")
     if spline_grid is not None:
-        spline_grid.text = " ".join(f"{v:.4f}" for v in np.linspace(min_age, max_age, 1001))
+        spline_grid.text = " ".join(
+            f"{v:.4f}" for v in np.linspace(min_age, max_age, 1001)
+        )
 
 
-def _configure_mcmc(root, chain_length, use_coupled_mcmc, chains, target,
-                     log_heated_chains, delta_temperature, optimise, resample_every):
+def _configure_mcmc(
+    root,
+    chain_length,
+    use_coupled_mcmc,
+    chains,
+    target,
+    log_heated_chains,
+    delta_temperature,
+    optimise,
+    resample_every,
+):
     """Set MCMC or CoupledMCMC spec and attributes on the <run> element."""
     for run in root.findall(".//run"):
         if run.attrib.get("id") != "mcmc":
@@ -491,9 +637,14 @@ def _write_xml(root, output_path):
         f.write("\n".join(lines))
 
 
-def _build_output_suffix(output_suffix_override, clip_trans_rate,
-                          exclude_case_counts, exclude_seroprevalence,
-                          exclude_wastewater, is_datastream_template):
+def _build_output_suffix(
+    output_suffix_override,
+    clip_trans_rate,
+    exclude_case_counts,
+    exclude_seroprevalence,
+    exclude_wastewater,
+    is_datastream_template,
+):
     """Determine the output filename suffix."""
     if is_datastream_template:
         if output_suffix_override is not None:
@@ -539,10 +690,15 @@ def replace_blocks_template(
     use_fixed_tree=True,
     output_suffix_override=None,
     clip_trans_rate=True,
+    local_trans_rate=False,
 ):
     """
     Replace <data>, <trait>, and datastream parameter blocks in a Mascot template
     XML, configure MCMC, and write the resulting XML file.
+
+    local_trans_rate: when True, wire forward migration into NeDynamics and add
+        LocalTransmissionSmallerThan priors so Ne is computed from the local
+        (intra-deme) transmission rate β^local. Independent of clip_trans_rate.
     """
     tree = ET.parse(template_path)
     root = tree.getroot()
@@ -551,7 +707,10 @@ def replace_blocks_template(
         case_counts_by_deme is not None
         or seroprevalence_by_deme is not None
         or wastewater_by_deme is not None
-        or (output_suffix_override is not None and output_suffix_override != VARIANT_ORIGINAL)
+        or (
+            output_suffix_override is not None
+            and output_suffix_override != VARIANT_ORIGINAL
+        )
     )
 
     # Set clipTransRate on Spline elements for datastream templates
@@ -567,13 +726,22 @@ def replace_blocks_template(
             root.remove(data_elem)
 
     # Inject alignment, traits
-    _inject_traits(root, trait_block, type_trait_block, infer_tree=use_fixed_tree == False)
+    _inject_traits(
+        root, trait_block, type_trait_block, infer_tree=use_fixed_tree == False
+    )
 
     # Inject datastream parameter values
     if is_datastream_template:
         _inject_datastream_params(
             root, gamma, case_counts_by_deme, seroprevalence_by_deme, wastewater_by_deme
         )
+
+    # Wire β^local migration decomposition and local transmission priors.
+    # Only applied when local_trans_rate=True; otherwise the XML uses the
+    # original (total) transmission rate parameterisation.
+    if is_datastream_template and local_trans_rate:
+        _wire_migration_into_ne_dynamics(root)
+        _add_local_transmission_priors(root)
 
     # Remove excluded elements and handle onlytree variant
     if exclude_case_counts or exclude_seroprevalence or exclude_wastewater:
@@ -591,8 +759,17 @@ def replace_blocks_template(
     # Insert alignment at root
     root.insert(0, ET.fromstring(mascot_alignment_block))
 
-    _configure_mcmc(root, chain_length, use_coupled_mcmc, chains, target,
-                     log_heated_chains, delta_temperature, optimise, resample_every)
+    _configure_mcmc(
+        root,
+        chain_length,
+        use_coupled_mcmc,
+        chains,
+        target,
+        log_heated_chains,
+        delta_temperature,
+        optimise,
+        resample_every,
+    )
 
     # Inject fixed Newick tree
     if newick_tree is not None:
@@ -609,8 +786,11 @@ def replace_blocks_template(
             mascot_logp.set("compute_likelihood", "false")
 
     output_suffix = _build_output_suffix(
-        output_suffix_override, clip_trans_rate,
-        exclude_case_counts, exclude_seroprevalence, exclude_wastewater,
+        output_suffix_override,
+        clip_trans_rate,
+        exclude_case_counts,
+        exclude_seroprevalence,
+        exclude_wastewater,
         is_datastream_template,
     )
     _write_xml(root, xml_name + output_suffix + ".xml")
@@ -684,9 +864,7 @@ def build_case_counts_by_deme(
         # Write to temp file so generic reader can process it
         import tempfile
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp:
             df.to_csv(tmp, index=False)
             case_counts_file = tmp.name
 
@@ -798,29 +976,51 @@ def get_uninfectious_rate(parameters_path):
 # main() helpers — extracted to keep main() under ~60 lines
 # ---------------------------------------------------------------------------
 
+
 def _detect_exclusions(args):
     """Determine which datastreams to exclude based on --variant_type or file checks."""
     if args.variant_type is not None:
         variant = args.variant_type
-        exclude_cc = variant in ("datastreams_nocasecounts", "datastreams_onlytree", VARIANT_ORIGINAL)
-        exclude_sp = variant in ("datastreams_noseroprevalence", "datastreams_onlytree", VARIANT_ORIGINAL)
-        exclude_ww = variant in ("datastreams_nowastewater", "datastreams_onlytree", VARIANT_ORIGINAL)
+        exclude_cc = variant in (
+            "datastreams_nocasecounts",
+            "datastreams_onlytree",
+            VARIANT_ORIGINAL,
+        )
+        exclude_sp = variant in (
+            "datastreams_noseroprevalence",
+            "datastreams_onlytree",
+            VARIANT_ORIGINAL,
+        )
+        exclude_ww = variant in (
+            "datastreams_nowastewater",
+            "datastreams_onlytree",
+            VARIANT_ORIGINAL,
+        )
         use_fixed_tree = variant != "datastreams_nomascotll"
     else:
         exclude_cc = (
             args.case_counts is None
             or args.case_counts == ""
-            or (os.path.exists(args.case_counts) and os.path.getsize(args.case_counts) == 0)
+            or (
+                os.path.exists(args.case_counts)
+                and os.path.getsize(args.case_counts) == 0
+            )
         )
         exclude_sp = (
             args.seroprevalence is None
             or args.seroprevalence == ""
-            or (os.path.exists(args.seroprevalence) and os.path.getsize(args.seroprevalence) == 0)
+            or (
+                os.path.exists(args.seroprevalence)
+                and os.path.getsize(args.seroprevalence) == 0
+            )
         )
         exclude_ww = (
             args.wastewater is None
             or args.wastewater == ""
-            or (os.path.exists(args.wastewater) and os.path.getsize(args.wastewater) == 0)
+            or (
+                os.path.exists(args.wastewater)
+                and os.path.getsize(args.wastewater) == 0
+            )
         )
         use_fixed_tree = True
     return exclude_cc, exclude_sp, exclude_ww, use_fixed_tree
@@ -861,8 +1061,7 @@ def _process_tree_data(args):
         leaf_time_dict_relativetoroot, orient="index", columns=["time_relativetoroot"]
     )
     state_time_csv = (
-        state_time_csv
-        .merge(tmp, left_index=True, right_index=True)
+        state_time_csv.merge(tmp, left_index=True, right_index=True)
         .merge(tmp_relative, left_index=True, right_index=True)
         .reset_index(drop=False)
         .rename(columns={"index": "sample_id"})
@@ -883,12 +1082,24 @@ def _build_all_datastreams(args, exclude_cc, exclude_sp, exclude_ww, max_age, mi
     builders = []
     if not exclude_cc and args.case_counts:
         if os.path.exists(args.case_counts) and os.path.getsize(args.case_counts) > 0:
-            builders.append(("cc", lambda: build_case_counts_by_deme(
-                args.case_counts, remove_small_counts=False, add1tocounts=args.add1tocounts
-            )))
+            builders.append(
+                (
+                    "cc",
+                    lambda: build_case_counts_by_deme(
+                        args.case_counts,
+                        remove_small_counts=False,
+                        add1tocounts=args.add1tocounts,
+                    ),
+                )
+            )
     if not exclude_sp and args.seroprevalence:
-        if os.path.exists(args.seroprevalence) and os.path.getsize(args.seroprevalence) > 0:
-            builders.append(("sp", lambda: build_seroprevalence_by_deme(args.seroprevalence)))
+        if (
+            os.path.exists(args.seroprevalence)
+            and os.path.getsize(args.seroprevalence) > 0
+        ):
+            builders.append(
+                ("sp", lambda: build_seroprevalence_by_deme(args.seroprevalence))
+            )
     if not exclude_ww and args.wastewater:
         if os.path.exists(args.wastewater) and os.path.getsize(args.wastewater) > 0:
             builders.append(("ww", lambda: build_wastewater_by_deme(args.wastewater)))
@@ -1081,10 +1292,18 @@ def main():
         type=str,
         choices=("true", "false"),
         default="false",
-        help="For datastream template only: set clipTransRate on Spline elements to true or false. Default: false. Ignored when writing original (standard) template.",
+        help="For datastream template only: set clipTransRate on Spline elements to true or false. Default: false. When true the total transmission rate is capped at a small lower bound to avoid negative values (exact clip value is interally set by MASCOT-DS). Ignored when writing original (standard) template.",
+    )
+    parser.add_argument(
+        "--local-trans-rate",
+        type=str,
+        choices=("true", "false"),
+        default="false",
+        help="For datastream template only: when 'true', wire forward migration into NeDynamics and add LocalTransmissionSmallerThan priors so Ne is computed from the local (intra-deme) transmission rate β^local. When 'false' (default), the old (total transmission rate) parameterisation is kept and no wiring/priors are added.",
     )
     args = parser.parse_args()
     clip_trans_rate = args.clip_trans_rate == "true"
+    local_trans_rate = args.local_trans_rate == "true"
 
     # Detect which data types are excluded (overridden by variant_type when provided)
     exclude_case_counts, exclude_seroprevalence, exclude_wastewater, use_fixed_tree = (
@@ -1103,9 +1322,19 @@ def main():
     gamma = get_uninfectious_rate(args.parameters)
 
     # Build datastream dicts and compute encompassing max/min age
-    case_counts_by_deme, seroprevalence_by_deme, wastewater_by_deme, max_age, min_age = (
-        _build_all_datastreams(args, exclude_case_counts, exclude_seroprevalence,
-                                exclude_wastewater, max_age, min_age)
+    (
+        case_counts_by_deme,
+        seroprevalence_by_deme,
+        wastewater_by_deme,
+        max_age,
+        min_age,
+    ) = _build_all_datastreams(
+        args,
+        exclude_case_counts,
+        exclude_seroprevalence,
+        exclude_wastewater,
+        max_age,
+        min_age,
     )
 
     # Generate XML blocks from tree data
@@ -1128,7 +1357,9 @@ def main():
     )
 
     # Determine which XMLs to write
-    write_datastream = args.variant_type is None or args.variant_type in DATASTREAM_VARIANTS
+    write_datastream = (
+        args.variant_type is None or args.variant_type in DATASTREAM_VARIANTS
+    )
     write_standard = args.variant_type is None or args.variant_type == VARIANT_ORIGINAL
 
     if write_datastream:
@@ -1152,6 +1383,7 @@ def main():
                 args.variant_type if args.variant_type in DATASTREAM_VARIANTS else None
             ),
             clip_trans_rate=clip_trans_rate,
+            local_trans_rate=local_trans_rate,
             **common_kw,
         )
     if write_standard:
