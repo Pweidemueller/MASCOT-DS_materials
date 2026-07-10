@@ -19,7 +19,7 @@ observation time t_i in deme d we draw one replicate
     log y_rep_{s,i} = log(k_ww_s) + log I_s(t_i) - log(N_d) + sigma_s * Z
 
 with Z ~ Normal(0, 1). Prevalence I_s(t_i) is evaluated from the posterior
-``SkylinePrev`` spline the same way the BEAST likelihood does (see ``grid_mode``).
+``SkylinePrev`` spline the same way the BEAST likelihood does.
 The 95 % highest-density interval (HPD) of the replicate draws at each obs time
 defines the interval; ``coverage_95`` is the share of true observations inside
 their own interval.
@@ -149,7 +149,7 @@ def _alpha_true_for_deme(params, deme):
     return float(row["value"].iloc[0])
 
 
-def ppc_coverage_for_sim(paths, burnin, n_samples, seed, grid_mode):
+def ppc_coverage_for_sim(paths, burnin, n_samples, seed):
     """Compute the per-sim PPC coverage row and per-observation residual rows.
 
     Returns ``(summary_row, per_obs_rows)`` or ``None`` if the sim is unusable.
@@ -234,14 +234,8 @@ def ppc_coverage_for_sim(paths, burnin, n_samples, seed, grid_mode):
         log_I = np.empty((n_draws, n_obs_d), dtype=float)
         for s in range(n_draws):
             spline = _build_natural_spline(rateshifts, knot_samples[s])
-            if grid_mode == "snap":
-                t_eval_back, _ = _snap_to_grid(t_obs_back, grid_asc)
-                log_I[s, :] = _eval_spline_clamped(
-                    spline, t_eval_back, t_first, t_last
-                )
-            else:  # interpolate
-                grid_vals = _eval_spline_clamped(spline, grid_asc, t_first, t_last)
-                log_I[s, :] = np.interp(t_obs_back, grid_asc, grid_vals)
+            grid_vals = _eval_spline_clamped(spline, grid_asc, t_first, t_last)
+            log_I[s, :] = np.interp(t_obs_back, grid_asc, grid_vals)
 
         log_mu = np.log(alpha_samples)[:, None] + log_I - np.log(N)
         eps = rng.standard_normal((n_draws, n_obs_d)) * sigma_samples[:, None]
@@ -304,9 +298,7 @@ def ppc_coverage_for_sim(paths, burnin, n_samples, seed, grid_mode):
         "sigma_post_hpd_lower": float(sig_lo),
         "sigma_post_hpd_upper": float(sig_hi),
         "sigma_true_in_hpd": (
-            bool(sig_lo <= sigma_true <= sig_hi)
-            if sigma_true is not None
-            else None
+            bool(sig_lo <= sigma_true <= sig_hi) if sigma_true is not None else None
         ),
         "n_samples": int(n_draws),
     }
@@ -333,17 +325,6 @@ def main():
         help="Posterior draws (random, no replacement) used for the PPC (default 1000).",
     )
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument(
-        "--grid_mode",
-        choices=["snap", "interpolate"],
-        default="interpolate",
-        help=(
-            "How to evaluate prevalence at each obs time. 'interpolate' linearly "
-            "interpolates between bracketing grid-point spline values (current "
-            "Java likelihood); 'snap' uses the nearest grid point. Default: "
-            "interpolate."
-        ),
-    )
     parser.add_argument(
         "--limit", type=int, default=None, help="Process only the first N sims."
     )
@@ -380,7 +361,6 @@ def main():
                 burnin=cli.burnin,
                 n_samples=cli.n_samples,
                 seed=cli.seed,
-                grid_mode=cli.grid_mode,
             )
             if result is None:
                 print(f"[warn] {simid}: no usable PPC coverage.")

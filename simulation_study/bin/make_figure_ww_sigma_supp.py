@@ -91,8 +91,6 @@ def plot_panel_a_coverage(ax, df, *, seed=0):
     line_hw = jitter_hw + 0.06  # slightly wider than the jitter cloud
     median_cov = float(np.median(cov))
     ax.hlines(median_cov, -line_hw, line_hw, color="0.15", lw=1.4, zorder=4)
-    ax.axhline(NOMINAL, color="grey", ls="--", lw=1.0, zorder=2)
-
     ax.set_xlim(-0.6, 0.6)
     ax.set_xticks([])
     ax.set_ylabel("Fraction of true obs in 95% predictive interval")
@@ -148,7 +146,7 @@ def _true_prevalence_bins(df_obs, n_bins):
     return d, x_log10, edges
 
 
-def plot_panel_c_residual_vs_prevalence(ax, df_obs, **_ignored):
+def plot_panel_c_residual_vs_prevalence(ax, df_obs):
     """Residual RMS (in units of the true sigma) vs true prevalence count I.
 
     Observations are pooled across sims into decade bins of the true prevalence
@@ -253,15 +251,27 @@ def plot_panel_b_zoom(ax_top, ax_bot, df_obs, *, simid, max_days, deme=None):
 
     # Top: mean curves + observations in log-concentration space.
     ax_top.plot(
-        t_days, d["log_mu_true"].to_numpy(), color=TRUE_COLOR, lw=1.8,
-        label="Expected", zorder=2,
+        t_days,
+        d["log_mu_true"].to_numpy(),
+        color=TRUE_COLOR,
+        lw=1.8,
+        label="Expected",
+        zorder=2,
     )
     ax_top.plot(
-        t_days, d["log_mu_post"].to_numpy(), color=INFERRED_COLOR, lw=1.8,
-        label="Inferred", zorder=3,
+        t_days,
+        d["log_mu_post"].to_numpy(),
+        color=INFERRED_COLOR,
+        lw=1.8,
+        label="Inferred",
+        zorder=3,
     )
     ax_top.scatter(
-        t_days, d["log_obs"].to_numpy(), s=16, color="black", zorder=4,
+        t_days,
+        d["log_obs"].to_numpy(),
+        s=16,
+        color="black",
+        zorder=4,
         label="Wastewater",
     )
     ax_top.set_ylabel(r"$\mu = \ln(k_{ww}\cdot I/N)$")
@@ -270,8 +280,11 @@ def plot_panel_b_zoom(ax_top, ax_bot, df_obs, *, simid, max_days, deme=None):
     ax_top.legend(fontsize=FONTSIZES_LIST[2], loc="upper left", frameon=False)
     plt.setp(ax_top.get_xticklabels(), visible=False)
 
-    sec = ax_top.secondary_yaxis("right", functions=(np.exp, np.log))
-    sec.set_ylabel("Wastewater", rotation=270, labelpad=14)
+    # Right axis: the wastewater observations on the same ln scale (identity
+    # mirror of the left), rather than an exp-transformed linear-concentration
+    # axis.
+    sec = ax_top.secondary_yaxis("right", functions=(lambda y: y, lambda y: y))
+    sec.set_ylabel(r"$\ln(\mathrm{Wastewater})$", rotation=270, labelpad=14)
     sec.tick_params(labelsize=FONTSIZES_LIST[2])
 
     # Bottom: residuals standardized by the TRUE sigma (same scaling as Panel C).
@@ -281,8 +294,10 @@ def plot_panel_b_zoom(ax_top, ax_bot, df_obs, *, simid, max_days, deme=None):
     ax_bot.axhspan(-Z95, Z95, color="grey", alpha=0.15, zorder=0)
     ax_bot.axhline(0.0, color="grey", lw=0.8, zorder=1)
     ax_bot.scatter(t_days, r_true, s=18, color=TRUE_COLOR, edgecolor="none", zorder=3)
-    ax_bot.scatter(t_days, r_inf, s=18, color=INFERRED_COLOR, edgecolor="none", zorder=4)
-    ax_bot.set_xlim(0, max_days)
+    ax_bot.scatter(
+        t_days, r_inf, s=18, color=INFERRED_COLOR, edgecolor="none", zorder=4
+    )
+    ax_bot.set_xlim(0 - 0.4, max_days + 0.4)
     ax_bot.set_xlabel("Time (days)")
     ax_bot.set_ylabel(r"$(\mathrm{obs}_{ww}-\mu)/\sigma_{\mathrm{true}}$")
     ax_bot.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -318,7 +333,6 @@ def make_figure(
     df_obs,
     output_dir,
     *,
-    n_bins,
     panel_b_simid,
     panel_b_max_days,
     panel_b_deme,
@@ -347,7 +361,7 @@ def make_figure(
     add_panel_label(ax_b_top, "B")
 
     ax_c = fig.add_subplot(gs[:, 2])
-    plot_panel_c_residual_vs_prevalence(ax_c, df_obs, n_bins=n_bins)
+    plot_panel_c_residual_vs_prevalence(ax_c, df_obs)
     add_panel_label(ax_c, "C")
 
     output_png = output_dir / "ww_sigma_supp_figure.png"
@@ -395,13 +409,7 @@ def main():
         "--summary_csv", required=True, help="ww_ppc_persim_summary.csv"
     )
     parser.add_argument("--per_obs_csv", required=True, help="ww_ppc_per_obs.csv")
-    parser.add_argument("--output_dir", default="sandbox/ww_ppc")
-    parser.add_argument(
-        "--n_bins",
-        type=int,
-        default=20,
-        help="Log-spaced true-prevalence bins for Panel C (and the extra plot).",
-    )
+    parser.add_argument("--output_dir", required=True)
     parser.add_argument("--panel_b_simid", default="7_2")
     parser.add_argument("--panel_b_max_days", type=float, default=20.0)
     parser.add_argument(
@@ -420,12 +428,11 @@ def main():
         df_summary,
         df_obs,
         cli.output_dir,
-        n_bins=cli.n_bins,
         panel_b_simid=cli.panel_b_simid,
         panel_b_max_days=cli.panel_b_max_days,
         panel_b_deme=cli.panel_b_deme,
     )
-    plot_extra_mean_misfit(df_obs, cli.output_dir, n_bins=cli.n_bins)
+    plot_extra_mean_misfit(df_obs, cli.output_dir)
 
 
 if __name__ == "__main__":
