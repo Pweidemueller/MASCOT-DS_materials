@@ -568,6 +568,30 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
     """
 }
 
+// [2] Value-of-information / datastream comparison across MASCOT-DS variants.
+// All required CSVs (params/prevalence/migration_rates per datastream variant
+// + sim metadata) are staged flat into the work dir, so --analysis_dir is '.'.
+process MAKE_FIGURE_DATASTREAMS_VOI {
+    tag "value of datastreams"
+    publishDir "${params.outdir}/6_valueofdatastreams", mode: 'copy'
+
+    input:
+    path all_csvs
+
+    output:
+    path "*.png", emit: png_plots
+    path "*.pdf", emit: pdf_plots
+    path "*_data.csv", emit: data_csvs
+
+    script:
+    """
+    make_figure_datastreams_voi.py \
+        --analysis_dir . \
+        --output_dir . \
+        --sim_metadata_csv all_sim_metadata.csv
+    """
+}
+
 // ---------------------------------------------------------------------------
 // Main workflow
 // ---------------------------------------------------------------------------
@@ -1033,6 +1057,18 @@ workflow ANALYSE_FROM_PUBLISHED {
         .combine(published_sim_metadata)
 
     MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
+
+    // ── [2] Value-of-datastreams comparison across MASCOT-DS variants ───
+    // Collect params/prevalence/migration_rates CSVs for every datastream
+    // variant plus the sim metadata into one flat list (staged into the work
+    // dir), so make_figure_datastreams_voi.py can read them via --analysis_dir .
+    voi_input_files = concatenated_csvs.concatenated_csv
+        .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
+        .map { it[2] }
+        .mix(Channel.fromPath("${params.outdir}/3_analysis/all_sim_metadata.csv"))
+        .collect()
+
+    MAKE_FIGURE_DATASTREAMS_VOI(voi_input_files)
 
     // ── ESS ─────────────────────────────────────────────────────────────
     ess_inputs = combined_logs_ch
