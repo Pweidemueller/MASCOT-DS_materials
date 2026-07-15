@@ -644,6 +644,7 @@ def replace_blocks_template(
     use_fixed_tree=True,
     output_suffix_override=None,
     clip_trans_rate=True,
+    calc_local_transmission_rate=False,
 ):
     """
     Replace <data>, <trait>, and datastream parameter blocks in a Mascot template
@@ -680,8 +681,8 @@ def replace_blocks_template(
             root, gamma, case_counts_by_deme, seroprevalence_by_deme, wastewater_by_deme
         )
 
-    # Wire β^local migration decomposition and local transmission priors
-    if is_datastream_template:
+    # Wire β^local migration decomposition and local transmission priors - optional
+    if is_datastream_template and calc_local_transmission_rate:
         _wire_migration_into_ne_dynamics(root)
         _add_local_transmission_priors(root)
 
@@ -1193,6 +1194,11 @@ def main():
         default="false",
         help="For datastream template only: set clipTransRate on Spline elements to true or false. Default: false. Ignored when writing original (standard) template.",
     )
+    parser.add_argument(
+        "--calc-local-transmission-rate",
+        action="store_true",
+        help="Calculate local transmission rate",
+    )
     args = parser.parse_args()
     clip_trans_rate = args.clip_trans_rate == "true"
 
@@ -1262,6 +1268,7 @@ def main():
                 args.variant_type if args.variant_type in DATASTREAM_VARIANTS else None
             ),
             clip_trans_rate=clip_trans_rate,
+            calc_local_transmission_rate=args.calc_local_transmission_rate, # Optional
             **common_kw,
         )
     if write_standard:
