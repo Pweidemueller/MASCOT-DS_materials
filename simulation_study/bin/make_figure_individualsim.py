@@ -26,6 +26,7 @@ import pandas as pd
 from scipy.interpolate import make_interp_spline
 from scipy.stats import kstest, norm
 
+from constants import COLORS
 from plot_utils import (
     DEFAULT_FONTSIZES,
     FONTSIZES_LIST,
@@ -34,8 +35,12 @@ from plot_utils import (
 )
 from analyse_posteriors import (
     calculate_hpd,
+    create_Ne_dynamics_long,
+    get_hpd_intervals,
+    get_timesincestart,
     parse_arguments,
     prepare_skyline_plot_data,
+    read_beast_log,
     _plot_prevalence_panel,
     _plot_ne_panel,
     _plot_cumincidence_panel,
@@ -58,13 +63,17 @@ def _ordered_demes(data):
     return demes
 
 
-def run_per_deme_figures(data, args, time_unit="days"):
+def run_per_deme_figures(data, args, time_unit="days", combprevcuminc_only=False):
     """
     Build and save one figure per (deme, panel type): prevalence, ne, cumincidence.
 
     Uses data returned by prepare_skyline_plot_data(args). Saves to
     {args.out_prefix}_deme{N}_{start_deme|secondary_deme}_{prevalence|ne|cumincidence}[_log].png (and .pdf).
     The ``_prevalence_log`` suffix means log-scale prevalence with linear case counts and wastewater.
+
+    When ``combprevcuminc_only`` is True, only the combined prevalence +
+    cumulative incidence panel is written per deme (the standalone
+    ``_prevalence_log`` and ``_ne``/``_ne_log`` files are skipped).
     """
     time_factor = 365.0 if time_unit == "days" else 1.0
     time_label = "days" if time_unit == "days" else "years"
@@ -115,29 +124,30 @@ def run_per_deme_figures(data, args, time_unit="days"):
         if data["max_time"] is not None:
             axes[0].set_xlim(0, data["max_time"] * time_factor)
 
-        fig_log, ax_log = plt.subplots(1, 1, figsize=(5, 2))
-        _plot_prevalence_panel(
-            ax_log,
-            deme,
-            hpd_datastream=hpd_datastream,
-            trajectory_data=data["trajectory_data"],
-            case_counts_data=data["case_counts_data"],
-            wastewater_data=data["wastewater_data"],
-            validation_data_datastreams_prevalence=data[
-                "validation_data_datastreams_prevalence"
-            ],
-            show_logscale=False,
-            show_logscale_prevalence_only=True,
-            case_counts_P1=False,
-            fig=fig_log,
-            n_demes=1,
-            **common_kw,
-        )
-        if data["max_time"] is not None:
-            ax_log.set_xlim(0, data["max_time"] * time_factor)
-        plt.tight_layout()
-        save_figure_png_and_pdf(f"{prefix}_prevalence_log.png")
-        plt.close()
+        if not combprevcuminc_only:
+            fig_log, ax_log = plt.subplots(1, 1, figsize=(5, 2))
+            _plot_prevalence_panel(
+                ax_log,
+                deme,
+                hpd_datastream=hpd_datastream,
+                trajectory_data=data["trajectory_data"],
+                case_counts_data=data["case_counts_data"],
+                wastewater_data=data["wastewater_data"],
+                validation_data_datastreams_prevalence=data[
+                    "validation_data_datastreams_prevalence"
+                ],
+                show_logscale=False,
+                show_logscale_prevalence_only=True,
+                case_counts_P1=False,
+                fig=fig_log,
+                n_demes=1,
+                **common_kw,
+            )
+            if data["max_time"] is not None:
+                ax_log.set_xlim(0, data["max_time"] * time_factor)
+            plt.tight_layout()
+            save_figure_png_and_pdf(f"{prefix}_prevalence_log.png")
+            plt.close(fig_log)
 
         # --- Cumulative incidence (linear only) ---
         ax = axes[1]
@@ -159,11 +169,13 @@ def run_per_deme_figures(data, args, time_unit="days"):
 
         if data["max_time"] is not None:
             ax.set_xlim(0, data["max_time"] * time_factor)
-        plt.tight_layout()
+        fig.tight_layout()
         save_figure_png_and_pdf(f"{prefix}_combprevcuminc.png")
-        plt.close()
+        plt.close(fig)
 
         # --- Ne (linear and log) ---
+        if combprevcuminc_only:
+            continue
         for show_log in (False, True):
             fig, ax = plt.subplots(1, 1, figsize=(4, 2))
             _plot_ne_panel(
@@ -1279,9 +1291,7 @@ def plot_spline_gridpoint_diagnostics(
         ax.plot([lo, hi], [lo, hi], ls="--", color="grey", lw=0.8, label="y = x")
         ax.set_xlabel(r"$\log I_{true}(t_{obs})$")
         ax.set_ylabel(r"$\hat{S}(t_{eval})$ (posterior median)")
-        ax.set_title(
-            _deme_role_title(deme, starting_deme) + f" ({mode_label})"
-        )
+        ax.set_title(_deme_role_title(deme, starting_deme) + f" ({mode_label})")
         ax.legend(fontsize=7, loc="best")
 
     fig_p.tight_layout()
@@ -2182,6 +2192,342 @@ def plot_wastewater_ppc(data, output_dir, n_samples=1000, rng_seed=0, grid_mode=
     return per_obs_df
 
 
+def compute_posterior_prevalence_spline_band(log_ds, rate_shifts, deme, n_dense=400):
+    """Reconstruct the posterior log-prevalence spline for one deme.
+
+    Builds one natural cubic spline per posterior sample from the
+    ``SkylinePrev.Deme{deme+1}.{k}`` knot columns (log-prevalence values at the
+    ``rate_shifts`` knot times, in backward years) and evaluates each on a dense
+    backward-time grid. Mirrors the spline machinery used elsewhere in this
+    module (``_build_natural_spline`` + ``_eval_spline_clamped``).
+
+    Returns:
+        dict with keys
+          - ``t_back``      : (n_dense,) dense backward times (years)
+          - ``S_dense``     : (S, n_dense) log-prevalence spline per sample
+          - ``knot_back``   : (K,) knot backward times (= ``rate_shifts``)
+          - ``max_origin``  : float, oldest knot backward time (forward t = 0)
+        or ``None`` if the required columns are missing / empty.
+    """
+    if log_ds is None or log_ds.empty:
+        return None
+    rate_shifts = np.asarray(rate_shifts, dtype=float)
+    if rate_shifts.size == 0:
+        return None
+
+    deme_py = int(deme)
+    prev_cols = [
+        c for c in log_ds.columns if c.startswith(f"SkylinePrev.Deme{deme_py + 1}.")
+    ]
+    if not prev_cols:
+        print(f"Deme {deme_py}: no SkylinePrev columns; cannot build spline band.")
+        return None
+    prev_cols_sorted = sorted(prev_cols, key=lambda c: int(c.split(".")[-1]))
+    if len(prev_cols_sorted) != rate_shifts.size:
+        print(
+            f"Deme {deme_py}: {len(prev_cols_sorted)} SkylinePrev columns "
+            f"!= {rate_shifts.size} rate shifts; cannot build spline band."
+        )
+        return None
+
+    knot_samples = log_ds[prev_cols_sorted].to_numpy(dtype=float)  # (S, K)
+    n_samples = knot_samples.shape[0]
+    if n_samples == 0:
+        return None
+
+    t_first = float(rate_shifts.min())
+    t_last = float(rate_shifts.max())
+    t_back = np.linspace(t_first, t_last, n_dense)
+
+    S_dense = np.empty((n_samples, n_dense), dtype=float)
+    for s in range(n_samples):
+        spline = _build_natural_spline(rate_shifts, knot_samples[s])
+        S_dense[s, :] = _eval_spline_clamped(spline, t_back, t_first, t_last)
+
+    return {
+        "t_back": t_back,
+        "S_dense": S_dense,
+        "knot_back": rate_shifts,
+        "max_origin": t_last,
+    }
+
+
+def compute_nedynamics_dynamics_hpd(
+    file_path, deme_index, burnin, gridpointshifts, value_columns
+):
+    """Per-gridpoint posterior HPD of NeDynamics quantities for one deme.
+
+    Replicates the time mapping used by ``process_nedynamics_log`` (gridpoint
+    index -> forward time via the fine ``gridpointshifts`` grid) but returns the
+    HPD for arbitrary NeDynamics columns (e.g. ``logNe`` and
+    ``transmissionRate``) so several quantities share an identical
+    ``timesincestart`` axis.
+
+    Returns a DataFrame with columns ``Deme``, ``timesincestart`` and, for each
+    requested column ``c``: ``c``, ``c_hpd_lower``, ``c_hpd_upper`` (median and
+    95% HPD bounds). Empty DataFrame if the file is missing / unreadable.
+    """
+    if not file_path:
+        return pd.DataFrame()
+    ne_df = read_beast_log(file_path)
+    if ne_df.empty:
+        return pd.DataFrame()
+
+    ne_long = create_Ne_dynamics_long(ne_df)
+    if ne_long.empty:
+        return pd.DataFrame()
+    ne_long = ne_long[ne_long["Sample"] > ne_long["Sample"].max() * burnin]
+    if ne_long.empty:
+        return pd.DataFrame()
+
+    ne_long["timesincestart"] = get_timesincestart(
+        ne_long,
+        "gridpoint",
+        relative_rateshifts=False,
+        rateshifts=np.asarray(gridpointshifts, dtype=float),
+        mostrecent_sample_t=None,
+        subtract_one=False,
+    )
+    ne_long["Deme"] = int(deme_index)
+    n_gridpoints = ne_long["gridpoint"].nunique()
+
+    merged = None
+    for col in value_columns:
+        if col not in ne_long.columns:
+            print(f"Deme {deme_index}: column {col} not in NeDynamics log; skipping.")
+            continue
+        hpd = get_hpd_intervals(ne_long, n_gridpoints, col)
+        if hpd.empty:
+            continue
+        merged = (
+            hpd
+            if merged is None
+            else pd.merge(merged, hpd, on=["Deme", "timesincestart"], how="outer")
+        )
+    return merged if merged is not None else pd.DataFrame()
+
+
+def plot_dynamics_summary_figure(
+    data,
+    args,
+    output_png,
+    n_spline_samples=10,
+    rng_seed=0,
+    time_unit="days",
+):
+    """Assemble the 4-panel start-deme dynamics summary figure (PNG + PDF).
+
+    Panels (2x2), all for the outbreak start deme and all in the inferred
+    (MASCOT-DS) prevalence colour:
+
+      A) Posterior log-prevalence spline: ``n_spline_samples`` random posterior
+         draws, each drawn as a line, showing the spline interpolation. Bottom
+         x-axis is forward time (days from simulation start); a secondary top
+         x-axis shows backward time (years from the most recent sample, the
+         unit of the knot / rate-shift times). Knot times are marked with solid
+         black vertical lines.
+      B) Width of the 95% posterior interval of log-prevalence (upper - lower,
+         in log space) across all posterior samples vs forward time, with the
+         same knot vertical lines.
+      C) Transmission rate (median + 95% HPD band) from the NeDynamics log.
+      D) Effective population size Ne (median + 95% HPD band) from the
+         NeDynamics log, on a log y-axis.
+
+    ``output_png`` must end in ``.png``; a sibling ``.pdf`` is also written.
+    """
+    configure_pdf_fonts()
+    output_png = Path(output_png)
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+
+    time_factor = 365.0 if time_unit == "days" else 1.0
+    time_label = "days" if time_unit == "days" else "years"
+
+    demes = _ordered_demes(data)
+    if not demes:
+        print("No demes available; skipping dynamics summary figure.")
+        return
+    start_deme = int(demes[0])
+
+    log_ds = data["log_content_datastream"]
+    rate_shifts = np.asarray(data["rateshifts_datastream"], dtype=float)
+    gridpointshifts = np.asarray(data["gridpointshifts_datastream"], dtype=float)
+
+    band = compute_posterior_prevalence_spline_band(log_ds, rate_shifts, start_deme)
+    if band is None:
+        print("Could not build posterior spline band; skipping dynamics figure.")
+        return
+
+    max_origin = band["max_origin"]  # backward years of simulation start (forward t=0)
+    t_back = band["t_back"]
+    S_dense = band["S_dense"]
+    n_samples = S_dense.shape[0]
+
+    # Backward years -> forward display units (days).
+    t_fwd_dense = (max_origin - t_back) * time_factor
+    knot_fwd = (max_origin - band["knot_back"]) * time_factor
+
+    color = COLORS[3]  # MASCOT-DS inferred colour, matching the other figures
+
+    # NeDynamics-derived transmission rate and Ne for the start deme.
+    ne_file = args.nedynamics_deme1 if start_deme == 0 else args.nedynamics_deme2
+    ne_hpd = compute_nedynamics_dynamics_hpd(
+        ne_file,
+        start_deme,
+        args.burnin,
+        gridpointshifts,
+        value_columns=("transmissionRate", "logNe"),
+    )
+
+    fontsizes = FONTSIZES_LIST
+    fig, axes = plt.subplots(4, 1, figsize=(6, 12))
+    ax_a, ax_b, ax_c, ax_d = axes[0], axes[1], axes[2], axes[3]
+
+    x_max = max_origin * time_factor
+
+    def _add_knot_lines(ax):
+        for kf in knot_fwd:
+            ax.axvline(kf, color="black", linestyle="-", linewidth=0.8, zorder=1)
+
+    # ---- Panel A: posterior spline draws ----
+    rng = np.random.default_rng(rng_seed)
+    n_draw = int(min(n_spline_samples, n_samples))
+    draw_idx = rng.choice(n_samples, size=n_draw, replace=False)
+    _add_knot_lines(ax_a)
+    for i in draw_idx:
+        ax_a.plot(
+            t_fwd_dense,
+            S_dense[i],
+            color=color,
+            linewidth=0.9,
+            alpha=0.55,
+            zorder=3,
+        )
+    ax_a.set_xlim(0, x_max)
+    ax_a.set_xlabel(
+        f"Forward time ({time_label} from simulation start)", fontsize=fontsizes[1]
+    )
+    ax_a.set_ylabel("Log prevalence")
+    ax_a.spines["top"].set_visible(False)
+
+    # Secondary top x-axis: backward time in the knot-time unit (years).
+    def _fwd_to_back(x_days):
+        return max_origin - np.asarray(x_days) / time_factor
+
+    def _back_to_fwd(x_back):
+        return (max_origin - np.asarray(x_back)) * time_factor
+
+    sec_ax = ax_a.secondary_xaxis("top", functions=(_fwd_to_back, _back_to_fwd))
+    sec_ax.set_xlabel(
+        "Backward time (years from most recent sample)", fontsize=fontsizes[1]
+    )
+    sec_ax.tick_params(labelsize=fontsizes[2])
+
+    # ---- Panel B: width of the 95% interval (log space) ----
+    n_dense = S_dense.shape[1]
+    width95 = np.empty(n_dense)
+    for j in range(n_dense):
+        col = S_dense[:, j]
+        col = col[np.isfinite(col)]
+        if col.size < 2:
+            width95[j] = np.nan
+        else:
+            lo, hi, _ = calculate_hpd(col, alpha=0.05)
+            width95[j] = hi - lo
+    _add_knot_lines(ax_b)
+    ax_b.plot(t_fwd_dense, width95, color=color, linewidth=2, zorder=3)
+    ax_b.set_xlim(0, x_max)
+    ax_b.set_ylim(bottom=0)
+    ax_b.set_xlabel(f"Forward time ({time_label} from simulation start)")
+    ax_b.set_ylabel("Log prevalence 95% HPDI width")
+    ax_b.spines["top"].set_visible(False)
+    ax_b.spines["right"].set_visible(False)
+
+    # ---- Panel C: transmission rate ----
+    if not ne_hpd.empty and "transmissionRate" in ne_hpd.columns:
+        sub = ne_hpd.sort_values("timesincestart")
+        t_c = sub["timesincestart"].to_numpy() * time_factor
+        ax_c.fill_between(
+            t_c,
+            sub["transmissionRate_hpd_lower"],
+            sub["transmissionRate_hpd_upper"],
+            color=color,
+            alpha=0.2,
+            zorder=2,
+        )
+        ax_c.plot(t_c, sub["transmissionRate"], color=color, linewidth=2, zorder=3)
+    else:
+        print("No transmissionRate HPD; leaving panel C empty.")
+    ax_c.set_xlim(0, x_max)
+    ax_c.set_xlabel(f"Forward time ({time_label} from simulation start)")
+    ax_c.set_ylabel("Transmission rate")
+    ax_c.spines["top"].set_visible(False)
+    ax_c.spines["right"].set_visible(False)
+
+    # ---- Panel D: Ne (effective population size) ----
+    if not ne_hpd.empty and "logNe" in ne_hpd.columns:
+        sub = ne_hpd.sort_values("timesincestart")
+        t_d = sub["timesincestart"].to_numpy() * time_factor
+        # NeDynamics already reports Ne in log space; plot the log values directly.
+        ax_d.fill_between(
+            t_d,
+            sub["logNe_hpd_lower"],
+            sub["logNe_hpd_upper"],
+            color=color,
+            alpha=0.2,
+            zorder=2,
+        )
+        ax_d.plot(t_d, sub["logNe"], color=color, linewidth=2, zorder=3)
+    else:
+        print("No logNe HPD; leaving panel D empty.")
+    ax_d.set_xlim(0, x_max)
+    ax_d.set_xlabel(f"Forward time ({time_label} from simulation start)")
+    ax_d.set_ylabel("Effective population size (Ne)")
+    ax_d.spines["top"].set_visible(False)
+    ax_d.spines["right"].set_visible(False)
+
+    for ax in (ax_a, ax_b, ax_c, ax_d):
+        ax.tick_params(labelsize=fontsizes[2])
+
+    fig.tight_layout(h_pad=2.5)
+    # Panel labels: 2 pt larger than the shared helper, left-aligned in a single
+    # column to the left of every panel's y-axis label (the left-most text), and
+    # with panel A lifted clear of the secondary (top) x-axis label.
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    inv = fig.transFigure.inverted()
+    panel_label_fontsize = FONTSIZES_LIST[0] + 4
+    panels = ((ax_a, "A"), (ax_b, "B"), (ax_c, "C"), (ax_d, "D"))
+    # Shared x: left-most y-axis label edge across all panels, nudged further left.
+    x_left_fig = (
+        min(
+            inv.transform(
+                (ax.yaxis.get_label().get_window_extent(renderer=renderer).x0, 0)
+            )[0]
+            for ax, _ in panels
+        )
+        - 0.012
+    )
+    # Top of the secondary x-axis label, so panel A can be placed above it.
+    sec_label_top_fig = inv.transform(
+        (0, sec_ax.xaxis.get_label().get_window_extent(renderer=renderer).y1)
+    )[1]
+    for ax, lab in panels:
+        y_fig = ax.get_position().y1
+        if ax is ax_a:
+            y_fig = max(y_fig, sec_label_top_fig) + 0.004
+        fig.text(
+            x_left_fig,
+            y_fig,
+            lab,
+            fontsize=panel_label_fontsize,
+            fontweight="bold",
+            va="bottom",
+            ha="left",
+        )
+    save_figure_png_and_pdf(str(output_png))
+    plt.close(fig)
+
+
 def main():
     """Load data and produce one publication figure per (deme, panel) (PNG + PDF).
 
@@ -2205,6 +2551,37 @@ def main():
         "--skip_per_deme_figures",
         action="store_true",
         help="Suppress per-(deme, panel) file outputs.",
+    )
+    local_parser.add_argument(
+        "--combprevcuminc_only",
+        action="store_true",
+        help=(
+            "For the per-deme figures, only write the combined prevalence + "
+            "cumulative incidence panel (skip the standalone prevalence_log "
+            "and ne / ne_log files)."
+        ),
+    )
+    local_parser.add_argument(
+        "--dynamics_figure_out",
+        type=str,
+        default=None,
+        help=(
+            "If set, write the 4-panel start-deme dynamics summary figure "
+            "(PNG + PDF) at this path (must end in .png): posterior prevalence "
+            "spline draws, 95%% interval width, transmission rate, and Ne."
+        ),
+    )
+    local_parser.add_argument(
+        "--dynamics_figure_n_spline_samples",
+        type=int,
+        default=10,
+        help="Posterior draws overlaid in the prevalence spline panel (default 10).",
+    )
+    local_parser.add_argument(
+        "--dynamics_figure_seed",
+        type=int,
+        default=0,
+        help="RNG seed for selecting the prevalence spline draws (default 0).",
     )
     local_parser.add_argument(
         "--ww_diagnostics_out",
@@ -2278,10 +2655,24 @@ def main():
 
     data = prepare_skyline_plot_data(args)
     if not local_args.skip_per_deme_figures:
-        run_per_deme_figures(data, args, time_unit="days")
+        run_per_deme_figures(
+            data,
+            args,
+            time_unit="days",
+            combprevcuminc_only=local_args.combprevcuminc_only,
+        )
     if local_args.intro_figure_out is not None:
         plot_final_mascotds_intro_figure(
             data, local_args.intro_figure_out, time_unit="days"
+        )
+    if local_args.dynamics_figure_out is not None:
+        plot_dynamics_summary_figure(
+            data,
+            args,
+            local_args.dynamics_figure_out,
+            n_spline_samples=local_args.dynamics_figure_n_spline_samples,
+            rng_seed=local_args.dynamics_figure_seed,
+            time_unit="days",
         )
     if local_args.ww_diagnostics_out is not None:
         plot_wastewater_residual_diagnostics(
