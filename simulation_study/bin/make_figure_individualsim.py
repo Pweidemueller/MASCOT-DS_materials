@@ -2248,6 +2248,7 @@ def compute_posterior_prevalence_spline_band(log_ds, rate_shifts, deme, n_dense=
         "t_back": t_back,
         "S_dense": S_dense,
         "knot_back": rate_shifts,
+        "knot_samples": knot_samples,
         "max_origin": t_last,
     }
 
@@ -2392,6 +2393,7 @@ def plot_dynamics_summary_figure(
     rng = np.random.default_rng(rng_seed)
     n_draw = int(min(n_spline_samples, n_samples))
     draw_idx = rng.choice(n_samples, size=n_draw, replace=False)
+    knot_samples = band["knot_samples"]
     _add_knot_lines(ax_a)
     for i in draw_idx:
         ax_a.plot(
@@ -2401,6 +2403,15 @@ def plot_dynamics_summary_figure(
             linewidth=0.9,
             alpha=0.55,
             zorder=3,
+        )
+        # Filled orange dot at each knot point (overlap across samples is fine).
+        ax_a.scatter(
+            knot_fwd,
+            knot_samples[i],
+            s=14,
+            color=color,
+            edgecolors="none",
+            zorder=4,
         )
     ax_a.set_xlim(0, x_max)
     ax_a.set_xlabel(
