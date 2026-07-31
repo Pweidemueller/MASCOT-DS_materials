@@ -2898,6 +2898,7 @@ def validate_hpd_intervals(
     out_prefix: str,
     validation_type: str = "prevalence",
     params_df: pd.DataFrame = None,
+    knot_timesincestart: np.ndarray = None,
 ) -> pd.DataFrame:
     """
     Validate HPD intervals by comparing predicted values with actual trajectory data.
@@ -2918,12 +2919,18 @@ def validate_hpd_intervals(
         out_prefix: Prefix for output CSV file
         validation_type: Type of validation ("prevalence" or "ne")
         params_df: DataFrame with parameter values (required for "ne" validation)
+        knot_timesincestart: Optional array of ``timesincestart`` values at the
+            skyline spline's knot (rate-shift) times, on the same coordinate
+            system as ``hpd_intervals["timesincestart"]``. When given (only used
+            for ``validation_type == "prevalence"``), an ``is_knot`` boolean
+            column is added marking rows whose ``timesincestart`` matches a knot.
 
     Returns:
         pd.DataFrame: Validation results with columns depending on validation_type:
             For prevalence:
                 Deme, timesincestart, matched_t, logPrevalence, logPrevalence_hpd_lower,
-                logPrevalence_hpd_upper, expectedlogPrev, expectedlogPrevP1, inHPD, inHPDP1
+                logPrevalence_hpd_upper, expectedlogPrev, expectedlogPrevP1, inHPD, inHPDP1,
+                is_knot (only when ``knot_timesincestart`` is given)
             For ne:
                 Deme, timesincestart, matched_t, logNe, logNe_hpd_lower,
                 logNe_hpd_upper, expectedlogNe, inHPD
@@ -3030,6 +3037,21 @@ def validate_hpd_intervals(
                 "inHPDP1",
             ]
         ].copy()
+
+        if knot_timesincestart is not None and len(knot_timesincestart) > 0:
+            knots = np.asarray(knot_timesincestart, dtype=float)
+            t = hpd_validation_df["timesincestart"].to_numpy(dtype=float)
+            nearest_dist = np.min(np.abs(t[:, None] - knots[None, :]), axis=1)
+            # ``timesincestart`` values here are snapped onto a synthetic
+            # evenly-spaced grid (see get_hpd_intervals' assign_to_grid), so
+            # true knot times land near but not exactly on a grid point.
+            # Tolerance is half the grid spacing rather than a fixed epsilon.
+            unique_t = np.unique(t)
+            if len(unique_t) > 1:
+                tol = 0.5 * float(np.median(np.diff(np.sort(unique_t))))
+            else:
+                tol = 1e-6 * max(1.0, float(np.max(np.abs(knots))))
+            hpd_validation_df["is_knot"] = nearest_dist <= tol
 
         # Save results to CSV
         validation_output = f"{out_prefix}_hpd_validation_prevalence.csv"
@@ -3592,20 +3614,38 @@ def _compute_hpd_intervals(args, logs, datastream_files):
 
 
 def _validate_all_hpd(
-    hpd_intervals, cumulative_incidence_hpd, trajectory_data, params_df, out_prefix
+    hpd_intervals,
+    cumulative_incidence_hpd,
+    trajectory_data,
+    params_df,
+    out_prefix,
+    rateshifts_datastream=None,
+    gridpointshifts_datastream=None,
 ):
     """Run HPD validation for prevalence, Ne, and cumulative incidence.
+
+    ``rateshifts_datastream`` / ``gridpointshifts_datastream`` (from
+    ``read_beast_log``) are used to mark which prevalence validation rows fall
+    on a spline knot (rate-shift) time, via ``is_knot``.
 
     Returns:
         dict with keys: validation_data_datastreams_prevalence,
         validation_data_datastreams_ne, validation_data_datastreams_cumIncidence,
         validation_data_original_ne.
     """
+    knot_timesincestart = None
+    if rateshifts_datastream is not None and gridpointshifts_datastream is not None:
+        if len(rateshifts_datastream) > 0 and len(gridpointshifts_datastream) > 0:
+            knot_timesincestart = (
+                gridpointshifts_datastream.max() - rateshifts_datastream
+            )
+
     validation_prevalence = validate_hpd_intervals(
         hpd_intervals["hpd_datastream"],
         trajectory_data,
         out_prefix + "_datastreams",
         validation_type="prevalence",
+        knot_timesincestart=knot_timesincestart,
     )
     validation_ne = validate_hpd_intervals(
         hpd_intervals["hpd_datastream"],
@@ -3665,6 +3705,8 @@ def prepare_skyline_plot_data(args):
         inputs["trajectory_data"],
         inputs["params_df"],
         args.out_prefix,
+        rateshifts_datastream=logs["rateshifts_datastream"],
+        gridpointshifts_datastream=logs["gridpointshifts_datastream"],
     )
 
     diff_treeroot_start = (

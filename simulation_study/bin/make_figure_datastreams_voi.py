@@ -16,7 +16,7 @@ figures, with one MASCOT-DS variant per color (from ``lab_palette``):
    relative version is needed.
 
 3. ``prevalence_hpd_width_logprev_over_time.png``
-   Median + band of log-prevalence HPD width ``upper - lower``, mirroring
+   Median + band of log-prevalence HPDI width ``upper - lower``, mirroring
    the ``ne_hpd_width_logne_over_time`` figure.
 
    Plots 1-3 are also produced with a ``_no_treeonly`` suffix, repeating
@@ -27,14 +27,14 @@ figures, with one MASCOT-DS variant per color (from ``lab_palette``):
    Boxplot per variant in two panels (start->secondary, secondary->start).
 
 5. ``migration_rates_relative_hpd_width.png``
-   Same layout as (4) for relative HPD width ``(upper - lower) / median``.
+   Same layout as (4) for relative HPDI width ``(upper - lower) / median``.
 
 6. ``datastream_params_relative_bias.png``
    One subplot per parameter group (caseCounts.{scaling,dispersion},
    wastewater.{scaling,sigma}); boxplot per variant.
 
 7. ``datastream_params_relative_hpd_width.png``
-   Same layout as (6) for relative HPD width.
+   Same layout as (6) for relative HPDI width.
 
 Each plot is accompanied by a ``<stem>_data.csv`` next to the PNG so the
 figure can be reproduced from the saved values.
@@ -83,8 +83,8 @@ VERSIONS: tuple[tuple[str, str, str], ...] = (
     ("datastreams_nocasecounts", "No CC", lp.UCSF_TEAL),
     ("datastreams_noseroprevalence", "No SP", lp.BASEL),
     ("datastreams_nowastewater", "No WW", lp.BRIDGE),
-    ("datastreams_nomascotll", "No MASCOT-LL", lp.HUTCH),
-    ("datastreams_onlytree", "Tree only", lp.RAIN),
+    ("datastreams_nomascotll", "No phylogeny", lp.HUTCH),
+    ("datastreams_onlytree", "Phylogeny only", lp.RAIN),
 )
 
 VERSION_KEYS: list[str] = [v[0] for v in VERSIONS]
@@ -122,7 +122,7 @@ def prepare_prevalence_metrics(
     df_prev: pd.DataFrame,
     stem_meta: dict[str, tuple[int, float, float]],
 ) -> pd.DataFrame:
-    """Add ``time_index``, ``deme_role``, real-space rel bias and log HPD width."""
+    """Add ``time_index``, ``deme_role``, real-space rel bias and log HPDI width."""
     sim_ids = df_prev["Simulation"].astype(str).unique().tolist()
     traj_meta = _trajectory_meta_for_sims(sim_ids, stem_meta)
     starting_deme = {s: m[0] for s, m in traj_meta.items()}
@@ -352,9 +352,7 @@ def _plot_prevalence_set(
     """Produce the three prevalence-over-time plots for a subset of variants."""
     subset = {k: prev_prepared[k] for k in version_keys}
     color_by_key = {v[0]: v[2] for v in VERSIONS}
-    label_color_pairs = tuple(
-        (LABEL_BY_KEY[k], color_by_key[k]) for k in version_keys
-    )
+    label_color_pairs = tuple((LABEL_BY_KEY[k], color_by_key[k]) for k in version_keys)
 
     agg_prev_relbias = aggregate_prevalence_across_versions(
         subset, "bias_prev_real_rel"
@@ -385,7 +383,7 @@ def _plot_prevalence_set(
     plot_two_panel_metric_multi_model(
         agg_prev_width,
         width_png,
-        ylabel="HPD width (log prevalence)",
+        ylabel="95% HPDI width (log prevalence)",
         models_colors=label_color_pairs,
         draw_zero_line=False,
     )
@@ -458,7 +456,7 @@ def run(
         value_col="rel_hpd_width",
         versions=VERSION_LABELS,
         colors=COLOR_BY_LABEL,
-        ylabel="Relative HPD width\n(migration rate)",
+        ylabel="Relative 95% HPDI width\n(migration rate)",
         output_png=mig_relwidth_png,
         draw_zero_line=False,
         figsize=(8.0, 3.6),
@@ -505,7 +503,7 @@ def run(
         value_col="rel_hpd_width",
         versions=VERSION_LABELS,
         colors=COLOR_BY_LABEL,
-        ylabel="Relative HPD width",
+        ylabel="Relative 95% HPDI width",
         output_png=param_relwidth_png,
         draw_zero_line=False,
         figsize=(11.0, 3.6),
