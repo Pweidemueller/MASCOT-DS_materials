@@ -2,7 +2,24 @@
 
 ## Run simulation study
 
+## Make figures
+### Individual simulation
+```
+bash simulation_study/bin/run_individualsim_figure_86_2.sh
+```
 
+### True vs estimate and value of information figures
+```
+nextflow run main.nf -entry ANALYSE_FROM_BEASTOUTPUTS \
+    --outdir /Users/pweidemuller/Documents/git_repos/MASCOT-DS_materials/simulation_study/results
+```
+
+
+## Estimate efficiency/convergence times
+```
+conda run -n biopython_env python simulation_study/bin/sampler_efficiency.py \
+    --output-dir simulation_study/results_individuallogs/sampler_efficiency
+```
 ## Analyse sigma over-estimation
 1. Per-simulation wastewater PPC + residual ingredients: uses the combined log which already had burnin removed
 ```

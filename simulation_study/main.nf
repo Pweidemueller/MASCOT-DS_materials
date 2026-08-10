@@ -568,10 +568,11 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
     """
 }
 
-// [2] Value-of-information / datastream comparison across MASCOT-DS variants.
+// [2] Composite value-of-information figures across MASCOT-DS variants
+// (main + supplementary gridspec panels; see make_composite_figures_voi.py).
 // All required CSVs (params/prevalence/migration_rates per datastream variant
 // + sim metadata) are staged flat into the work dir, so --analysis_dir is '.'.
-process MAKE_FIGURE_DATASTREAMS_VOI {
+process MAKE_COMPOSITE_FIGURES_VOI {
     tag "value of datastreams"
     publishDir "${params.outdir}/6_valueofdatastreams", mode: 'copy'
 
@@ -585,10 +586,11 @@ process MAKE_FIGURE_DATASTREAMS_VOI {
 
     script:
     """
-    make_figure_datastreams_voi.py \
+    make_composite_figures_voi.py \
         --analysis_dir . \
         --output_dir . \
-        --sim_metadata_csv all_sim_metadata.csv
+        --sim_metadata_csv all_sim_metadata.csv \
+        --template_xml "${projectDir}/data/Mascot_datastreams_template_fixedtree.xml"
     """
 }
 
@@ -667,55 +669,18 @@ workflow {
     combined_trees = COMBINE_TREES(trees_grouped)
     mcc_trees = ANNOTATE_TREES(combined_trees.combined_trees)
     PLOT_TREES_MASCOT(mcc_trees.annotated_trees)
-
-    // ── ESS calculation ─────────────────────────────────────────────────
-    // Extract mascot_logs combined log from each consolidated COMBINE_LOGS output
-    ess_inputs = combined.combined_logs
-        .map { xmlname, base_name, variant_type, logs ->
-            def logList = logs instanceof List ? logs : [logs]
-            def mascot_log = logList.find { it.name.contains('mascot_logs') }
-            mascot_log != null
-                ? tuple(xmlname + ".mascot_logs", variant_type, mascot_log)
-                : null
-        }
-        .filter { it != null }
-
-    ess_results = CALCULATE_ESS(ess_inputs)
-
-    ess_csvs_collected = ess_results.ess_csv
-        .groupTuple(by: 0)
-        .map { variant, csvs -> tuple("ess", variant, csvs) }
-
-    ess_summary = AGGREGATE_ESS(ess_csvs_collected)
-
-    // ESS heatmap: pair each non-original variant with the original summary
-    ess_summary_original = ess_summary.ess_summary
-        .filter { variant, csv -> variant == 'original' }
-        .map { variant, csv -> tuple('all', csv) }
-
-    ess_summary_other = ess_summary.ess_summary
-        .filter { variant, csv -> variant != 'original' }
-        .map { variant, csv -> tuple('all', variant, csv) }
-
-    ess_heatmap_inputs = ess_summary_original
-        .combine(ess_summary_other, by: 0)
-        .map { key, orig_csv, variant, var_csv ->
-            tuple(variant, orig_csv, var_csv)
-        }
-
-    PLOT_ESS_HEATMAP(ess_heatmap_inputs)
 }
 
 // ---------------------------------------------------------------------------
 // [1.6] Re-analysis workflow: reads from published results directory
 // Usage:
-//   nextflow run main.nf -entry ANALYSE_FROM_PUBLISHED \
+//   nextflow run main.nf -entry ANALYSE_FROM_BEASTOUTPUTS \
 //       --outdir /path/to/published/results
 //
 // This workflow skips simulation and inference — it only runs post-processing
 // and figure generation from previously published outputs.
 // ---------------------------------------------------------------------------
-workflow ANALYSE_FROM_PUBLISHED {
+workflow ANALYSE_FROM_BEASTOUTPUTS {
     // ── Read combined log files from 2_mascot/{base_name}/{variant}/ ────
     combined_logs_ch = Channel
         .fromPath("${params.outdir}/2_mascot/*/*/*.combined.log")
@@ -864,9 +829,6 @@ workflow ANALYSE_FROM_PUBLISHED {
 
     PLOT_HPD_VALIDATION(plot_inputs)
 
-    // ── [2] Per-simulation publication figures ──────────────────────────
-    // MAKE_INDIVIDUAL_SIM_FIGURES(analysis_inputs)
-
     // ── [2] Combine Ne HPD validation: original + datastreams → Model column
     ne_original = concatenated_csvs.concatenated_csv
         .filter { it[0] == 'ne' && it[1] == 'original' }
@@ -878,14 +840,6 @@ workflow ANALYSE_FROM_PUBLISHED {
 
     combine_ne_input = ne_original.combine(ne_datastreams)
     combined_ne = COMBINE_HPD_NE_BY_MODEL(combine_ne_input)
-
-    // // ── [2] Quantify information content across leave-one-out variants ──
-    // info_all_files = concatenated_csvs.concatenated_csv
-    //     .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
-    //     .map { it[2] }
-    //     .collect()
-
-    // QUANTIFY_INFORMATION_CONTENT(info_all_files)
 
     // ── [2] True vs estimated parameter figures ─────────────────────────
     fig_params_csv = concatenated_csvs.concatenated_csv
@@ -912,17 +866,17 @@ workflow ANALYSE_FROM_PUBLISHED {
 
     MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 
-    // ── [2] Value-of-datastreams comparison across MASCOT-DS variants ───
+    // ── [2] Composite value-of-datastreams figures across MASCOT-DS variants
     // Collect params/prevalence/migration_rates CSVs for every datastream
     // variant plus the sim metadata into one flat list (staged into the work
-    // dir), so make_figure_datastreams_voi.py can read them via --analysis_dir .
+    // dir), so make_composite_figures_voi.py can read them via --analysis_dir .
     voi_input_files = concatenated_csvs.concatenated_csv
         .filter { it[0] in ['params', 'prevalence', 'migration_rates'] && it[1].startsWith('datastreams') }
         .map { it[2] }
         .mix(Channel.fromPath("${params.outdir}/3_analysis/all_sim_metadata.csv"))
         .collect()
 
-    MAKE_FIGURE_DATASTREAMS_VOI(voi_input_files)
+    MAKE_COMPOSITE_FIGURES_VOI(voi_input_files)
 
     // ── ESS ─────────────────────────────────────────────────────────────
     ess_inputs = combined_logs_ch

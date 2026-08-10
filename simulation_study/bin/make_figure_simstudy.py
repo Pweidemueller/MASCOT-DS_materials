@@ -91,10 +91,10 @@ PARAM_GROUP_ORDER: tuple[str, ...] = (
 )
 
 PARAM_GROUP_TITLES: dict[str, str] = {
-    "caseCounts.scaling": "CC scaling",
+    "caseCounts.scaling": "CC scaling factor",
     "caseCounts.dispersion": "CC dispersion",
-    "wastewater.scaling": "WW scaling",
-    "wastewater.sigma": "WW sigma",
+    "wastewater.scaling": "WW scaling factor",
+    "wastewater.sigma": "WW std. deviation",
     # "seroprevalence.scaling": "SP scaling" — fixed to 1.0; not estimated
 }
 
@@ -116,10 +116,10 @@ SCALING_ROLE_FILENAME_STEM: dict[str, str] = {
 # Short y-axis tick labels for the compact horizontal coverage / bias panels.
 # Newlines keep labels vertically compact so they fit in narrow gridspec cells.
 PARAM_GROUP_AXIS_LABELS: dict[str, str] = {
-    "caseCounts.scaling": "CC\nscaling",
+    "caseCounts.scaling": "CC scaling\nfactor",
     "caseCounts.dispersion": "CC\ndispersion",
-    "wastewater.scaling": "WW\nscaling",
-    "wastewater.sigma": "WW\nsigma",
+    "wastewater.scaling": "WW scaling\nfactor",
+    "wastewater.sigma": "WW std.\ndeviation",
 }
 
 # Capitalised titles for the migration true-vs-estimate scatter panels.
@@ -164,8 +164,8 @@ COVERAGE_REF_BAND_ALPHA = 0.18
 # coordinates) keeps them on an absolute grid: every label in a row shares the
 # same y, and every label in a column shares the same x, regardless of how tall
 # a panel is or how much room its title / y-axis label take up.
-PANEL_LABEL_DX = 0.05
-PANEL_LABEL_DY = 0.008
+PANEL_LABEL_DX = 0.06
+PANEL_LABEL_DY = 0.01
 
 
 def add_panel_label(ax, label: str) -> None:
@@ -1198,16 +1198,20 @@ def run_time_series_hpd_validation_figures(
             plot_two_panel_metric_single_series(
                 agg_p_bias_rel,
                 prev_bias_rel_png,
-                ylabel="Relative bias of\nprevalence estimate",
+                ylabel="Relative bias of\nprevalence trajectory",
                 color=COLORS[3],
                 draw_zero_line=True,
             )
             save_plot_data_csv(agg_p_bias_rel, prev_bias_rel_png)
 
 
+# PREV_ROLE_PANEL_TITLES: dict[str, str] = {
+#     "start": "Start deme",
+#     "secondary": "Secondary deme",
+# }
 PREV_ROLE_PANEL_TITLES: dict[str, str] = {
-    "start": "Start deme",
-    "secondary": "Secondary deme",
+    "start": "",
+    "secondary": "",
 }
 
 
@@ -1217,8 +1221,16 @@ def _prepare_prevalence_scatter_frame(
     *,
     log_space: bool = True,
 ) -> pd.DataFrame:
-    """Add ``deme_role`` and true/median/HPD columns (on log or natural scale)."""
+    """Add ``deme_role`` and true/median/HPD columns (on log or natural scale).
+
+    Restricted to spline knot (rate-shift) times when the CSV carries an
+    ``is_knot`` column (from ``analyse_posteriors.py``), so the scatter shows
+    only the actually-inferred knot values rather than every densely-logged
+    trajectory point.
+    """
     df = add_prevalence_deme_role_column(df_prev, starting_deme_by_sim)
+    if "is_knot" in df.columns:
+        df = df[df["is_knot"].astype(bool)]
     df["expectedlogPrev"] = pd.to_numeric(df["expectedlogPrev"], errors="coerce")
     df = df.dropna(subset=["expectedlogPrev"]).copy()
     transform = (lambda x: x) if log_space else np.exp
@@ -1304,7 +1316,7 @@ def plot_final_figure(
 
     # --- figure & gridspec ----------------------------------------------
     fig = plt.figure(figsize=(14, 10))
-    gs = fig.add_gridspec(nrows=4, ncols=10, hspace=0.9, wspace=1.3)
+    gs = fig.add_gridspec(nrows=4, ncols=10, hspace=0.6, wspace=0.8)
 
     # --- prevalence scatter (rows 0-1, col 0) ---------------------------
     for row_offset, role_key in enumerate(("start", "secondary")):
@@ -1471,8 +1483,8 @@ def plot_final_figure_reduced(
     * rows 0-1, col 0: start-deme prevalence true-vs-inferred scatter
     * row 0, cols 1-2: start-deme prevalence coverage(%) over time
     * row 1, cols 1-2: start-deme prevalence relative bias over time
-    * row 2, col 0 / col 1: CC scaling / CC dispersion scatter
-    * row 3, col 0 / col 1: WW scaling / WW sigma scatter
+    * row 2, col 0 / col 1: CC scaling factor / CC dispersion scatter
+    * row 3, col 0 / col 1: WW scaling factor / WW std. deviation scatter
     * row 2, col 2: datastream parameter coverage(%) bars
     * row 3, col 2: datastream parameter relative-bias boxplots
 
@@ -1512,12 +1524,14 @@ def plot_final_figure_reduced(
 
     # --- figure & gridspec ----------------------------------------------
     fig = plt.figure(figsize=(10, 11))
-    gs = fig.add_gridspec(nrows=4, ncols=3, hspace=0.9, wspace=0.45)
+    gs = fig.add_gridspec(nrows=4, ncols=3, hspace=0.6, wspace=0.45)
 
     # --- start-deme prevalence scatter (rows 0-1, col 0) ----------------
     ax = fig.add_subplot(gs[0:2, 0])
     sub = prev_scatter_frame[prev_scatter_frame["deme_role"] == "start"]
-    plot_param_true_vs_estimate(ax, sub, title=PREV_ROLE_PANEL_TITLES["start"])
+    plot_param_true_vs_estimate(
+        ax, sub, title=PREV_ROLE_PANEL_TITLES["start"] + "Log prevalence"
+    )
     add_panel_label(ax, "A")
 
     # --- start-deme prevalence coverage / relative bias (rows 0-1, cols 1-2)
@@ -1535,7 +1549,7 @@ def plot_final_figure_reduced(
         ax,
         prev_rel_bias_agg,
         "start",
-        ylabel="Relative bias of\nprevalence estimate",
+        ylabel="Relative bias of\nprevalence trajectory",
         title="Start deme",
         draw_zero_line=True,
     )
@@ -1660,12 +1674,14 @@ def plot_supplementary_figure(
 
     # --- figure & gridspec ----------------------------------------------
     fig = plt.figure(figsize=(10, 11))
-    gs = fig.add_gridspec(nrows=4, ncols=3, hspace=0.9, wspace=0.45)
+    gs = fig.add_gridspec(nrows=4, ncols=3, hspace=0.6, wspace=0.45)
 
     # --- secondary-deme prevalence scatter (rows 0-1, col 0) ------------
     ax = fig.add_subplot(gs[0:2, 0])
     sub = prev_scatter_frame[prev_scatter_frame["deme_role"] == "secondary"]
-    plot_param_true_vs_estimate(ax, sub, title=PREV_ROLE_PANEL_TITLES["secondary"])
+    plot_param_true_vs_estimate(
+        ax, sub, title=PREV_ROLE_PANEL_TITLES["secondary"] + "Log prevalence"
+    )
     add_panel_label(ax, "A")
 
     # --- secondary-deme prevalence coverage / relative bias (rows 0-1, cols 1-2)
@@ -1683,8 +1699,8 @@ def plot_supplementary_figure(
         ax,
         prev_rel_bias_agg,
         "secondary",
-        ylabel="Secondary deme",
-        title="Relative bias of\nprevalence estimate",
+        title="Secondary deme",
+        ylabel="Relative bias of\nprevalence trajectory",
         draw_zero_line=True,
     )
     add_panel_label(ax, "C")
@@ -1710,7 +1726,7 @@ def plot_supplementary_figure(
         ax_m_cov,
         mig_axis_labels,
         coverage_percent_by_group(mig_enriched, "migration_direction", mig_dirs),
-        ylabel="Coverage (%)",
+        ylabel="Coverage (%) of\nmigration rates",
         show_xlabels=True,
         xlabel_angle=45.0,
         coverage_ref_band=COVERAGE_REF_BAND,
@@ -1724,7 +1740,7 @@ def plot_supplementary_figure(
         ax_m_bias,
         mig_axis_labels,
         {mig_axis_labels[i]: rel_bias_by_dir[d] for i, d in enumerate(mig_dirs)},
-        ylabel="Relative bias",
+        ylabel="Relative bias of\nmigration rates",
         show_xlabels=True,
         xlabel_angle=45.0,
     )
