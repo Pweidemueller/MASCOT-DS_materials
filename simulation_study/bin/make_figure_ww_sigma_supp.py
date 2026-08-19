@@ -8,7 +8,7 @@ Three panels:
      predictive interval). Median-across-sims line + 0.95 nominal line.
 
   B  Zoom on one simulation (default 7_2), early time points, start deme.
-     Top: log predicted mean concentration ln(k_ww * I / N) for the inferred
+     Top: log predicted mean concentration log(k_ww * I / N) for the inferred
      (posterior-median) and expected (true) parameters, with the log wastewater
      observations as black dots. Bottom (shared x): the three standardized-
      residual variants of those observations vs time.
@@ -229,7 +229,7 @@ def _pick_panel_b_deme(d, max_days):
 def plot_panel_b_zoom(ax_top, ax_bot, df_obs, *, simid, max_days, deme=None):
     """Panel B: single-sim early-phase zoom, entirely from the per-obs CSV.
 
-    Top -- left y-axis: mu = ln(k_ww * I / N) for the inferred (log_mu_post) and
+    Top -- left y-axis: mu = log(k_ww * I / N) for the inferred (log_mu_post) and
     expected/true (log_mu_true) mean curves, with the log wastewater
     observations as black dots; right y-axis: the same on the linear wastewater
     concentration scale (exp of the left axis).
@@ -274,7 +274,7 @@ def plot_panel_b_zoom(ax_top, ax_bot, df_obs, *, simid, max_days, deme=None):
         zorder=4,
         label="Wastewater",
     )
-    ax_top.set_ylabel(r"$\mu = \ln(k_{ww}\cdot I/N)$")
+    ax_top.set_ylabel(r"$\mu = \log(k_{ww}\cdot I/N)$")
     ax_top.set_xlim(0, max_days)
     ax_top.spines["top"].set_visible(False)
     ax_top.legend(fontsize=FONTSIZES_LIST[2], loc="upper left", frameon=False)
@@ -284,7 +284,7 @@ def plot_panel_b_zoom(ax_top, ax_bot, df_obs, *, simid, max_days, deme=None):
     # mirror of the left), rather than an exp-transformed linear-concentration
     # axis.
     sec = ax_top.secondary_yaxis("right", functions=(lambda y: y, lambda y: y))
-    sec.set_ylabel(r"$\ln(\mathrm{Wastewater})$", rotation=270, labelpad=14)
+    sec.set_ylabel(r"$\log(\mathrm{Wastewater})$", rotation=270, labelpad=14)
     sec.tick_params(labelsize=FONTSIZES_LIST[2])
 
     # Bottom: residuals standardized by the TRUE sigma (same scaling as Panel C).
