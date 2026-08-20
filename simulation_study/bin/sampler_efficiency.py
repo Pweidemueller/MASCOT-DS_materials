@@ -27,9 +27,10 @@ Analyses (all derived from files that already exist; no BEAST re-run):
 
   #3  Per-parameter compute curves, two views (one figure per parameter, in the
       #5 stationarity style -- x = configs, one dot per sim x seed):
-        (a) time to ESS=200: wallclock hours, MCMC samples, and relative 95%
-            HPD width (HPD/median) at the point each parameter first reaches
-            ESS=200. Runs that never reach ESS=200 instead report the
+        (a) time to a configurable target ESS (`--ess-target`, default 200):
+            wallclock hours, MCMC samples, and relative 95% HPD width
+            (HPD/median) at the point each parameter first reaches the
+            target. Runs that never reach it instead report the
             wallclock/samples/HPD of the FULL run and are drawn as an X
             instead of a dot;
         (b) state at a fixed GLOBAL wallclock budget (default 1 h): ESS, MCMC
@@ -92,7 +93,7 @@ ESS_THRESHOLD = 100.0  # "converged" per parameter (#1 min-ESS, #3b at-budget li
 # #3a target ESS for the "time to ESS" study. Runs that never reach this
 # within the run instead report the full-run wallclock/samples/HPD, marked
 # with an X (rather than a dot) in the plots.
-ESS_TIME_TARGET = 200.0
+ESS_TIME_TARGET = 100.0
 
 # #3 fixed GLOBAL compute budget (reconstructed wallclock hours), shared by
 # every simulation and config.
@@ -360,6 +361,25 @@ def params_of_interest(sd: SeedData) -> list[str]:
     log-posterior, the total-migration-rate aggregate, then each migration
     direction, then the prevalence knots."""
     return [POSTERIOR, TOTAL_MIG, *migration_dirs(sd), *prev_knots(sd)]
+
+
+# Hardcoded subset of parameters of interest that are actually PLOTTED
+# per-parameter (stationarity, #3a essThreshold, #3b at_budget). The
+# underlying CSVs (stationarity_by_seed.csv, essThreshold_by_seed.csv,
+# at_budget_by_seed.csv, ...) still cover every parameter of interest; this
+# list only trims the (many, mostly redundant) per-parameter figures down to
+# the ones of actual scientific interest.
+PLOT_PARAMS_OF_INTEREST: list[str] = [
+    POSTERIOR,
+    "SkylinePrev.start.1",
+    "SkylinePrev.start.5",
+    "SkylinePrev.start.11",
+    "SkylinePrev.secondary.1",
+    "SkylinePrev.secondary.5",
+    "SkylinePrev.secondary.11",
+    MIG_START_TO_SEC,
+    MIG_SEC_TO_START,
+]
 
 
 def pretty_param(name: str) -> str:
@@ -691,8 +711,10 @@ def plot_stationarity_per_param(stationarity: pd.DataFrame, out_dir: Path) -> No
     coloured by version (lab_palette); a short horizontal median bar per version
     (drawn on top of the dots)."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    for name in stationarity["parameter"].unique():
+    for name in PLOT_PARAMS_OF_INTEREST:
         sub = stationarity[stationarity["parameter"] == name]
+        if sub.empty:
+            continue
         fig, (axL, axR) = plt.subplots(1, 2, figsize=(11, 4.4))
         for ax, metric, ylabel in [
             (axL, "stationarity_sample", "MCMC samples to stationarity"),
@@ -773,20 +795,6 @@ def analysis_min_ess(
     )
 
 
-def plot_min_ess(min_ess_summary: pd.DataFrame, out_base: Path) -> None:
-    """Min focused-ESS distribution per config across (sim, seed)."""
-    fig, ax = plt.subplots(figsize=(7.5, 4.6))
-    _strip_by_config(ax, min_ess_summary, "min_ESS", agg="median", seed=1)
-    ax.axhline(ESS_THRESHOLD, color="k", ls="--", lw=1, label=f"ESS={ESS_THRESHOLD:g}")
-    ax.set_ylabel("min focused-parameter ESS")
-    ax.set_title("#1 Min focused-ESS per config (dots: sim×seed; bar: median)")
-    ax.legend(fontsize=8, frameon=False)
-    fig.tight_layout()
-    fig.savefig(out_base.with_suffix(".png"), dpi=150)
-    fig.savefig(out_base.with_suffix(".pdf"))
-    plt.close(fig)
-
-
 # =============================================================================
 # #2 ESS/hour decomposition -- for EVERY parameter of interest
 # =============================================================================
@@ -810,30 +818,8 @@ def analysis_decomposition(
     return df.sort_values(["sim", "config", "seed", "parameter"])
 
 
-def plot_decomposition(decomp: pd.DataFrame, out_base: Path) -> None:
-    """Absolute ESS/hour = ESS/sample x samples/hour, per config, pooled over
-    (sim, seed, parameter). All configs shown; dots are one per row."""
-    metrics = [
-        ("ESS_per_hour", "ESS per hour (post-burn-in)"),
-        ("ESS_per_sample", "ESS per sample (mixing quality)"),
-        ("samples_per_hour", "samples per hour (throughput)"),
-    ]
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.6), sharex=True)
-    for ax, (metric, ylabel) in zip(axes, metrics):
-        _strip_by_config(ax, decomp, metric, agg="median", seed=2)
-        ax.set_ylabel(ylabel, fontsize=9)
-    fig.suptitle(
-        "#2 ESS/hour decomposition — absolute (dots: sim×seed×param; bar: median)",
-        fontsize=11,
-    )
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
-    fig.savefig(out_base.with_suffix(".png"), dpi=150)
-    fig.savefig(out_base.with_suffix(".pdf"))
-    plt.close(fig)
-
-
 # =============================================================================
-# #3 Per-parameter compute curves: time-to-ESS=200 and state at a fixed budget
+# #3 Per-parameter compute curves: time-to-target-ESS and state at a fixed budget
 # =============================================================================
 
 
@@ -901,14 +887,17 @@ def _headline_width_col(kind: str) -> str:
     )
 
 
-def time_to_ess200(frontier: pd.DataFrame) -> pd.DataFrame:
+def time_to_essThreshold(frontier: pd.DataFrame, ess_target: float) -> pd.DataFrame:
     """Per (sim, config, seed, parameter): the FIRST checkpoint whose ESS
-    reaches ESS_TIME_TARGET, and the wallclock, MCMC sample and headline 95%
+    reaches `ess_target`, and the wallclock, MCMC sample and headline 95%
     HPD width attained there (HPD/median for migration; absolute for
     prevalence). If a parameter never reaches the target within the run,
-    `reached_ess200=False` and the wallclock/samples/HPD instead report the
-    FULL run's last checkpoint (`missed_ess200=True` flags these for plotting
+    `reached_essThreshold=False` and the wallclock/samples/HPD instead report the
+    FULL run's last checkpoint (`missed_essThreshold=True` flags these for plotting
     as an X rather than a dot).
+
+    Column/file names keep the `essThreshold` naming regardless of the configured
+    `ess_target` -- it is a fixed analysis-id, not the literal threshold.
     """
     rows = []
     keys = ["sim", "config", "seed", "parameter"]
@@ -916,7 +905,7 @@ def time_to_ess200(frontier: pd.DataFrame) -> pd.DataFrame:
         grp = grp.sort_values("elapsed_hours")
         kind = grp["kind"].iloc[0]
         wcol = _headline_width_col(kind)
-        hit = grp[grp["ESS"] >= ESS_TIME_TARGET]
+        hit = grp[grp["ESS"] >= ess_target]
         reached = len(hit) > 0
         r = hit.iloc[0] if reached else grp.iloc[-1]  # fallback: full-run state
         rows.append(
@@ -927,11 +916,11 @@ def time_to_ess200(frontier: pd.DataFrame) -> pd.DataFrame:
                 "seed": seed,
                 "parameter": parameter,
                 "kind": kind,
-                "reached_ess200": reached,
-                "missed_ess200": not reached,
-                "hours_to_ess200": float(r["elapsed_hours"]),
-                "samples_to_ess200": int(r["sample"]),
-                "hpd_at_ess200": float(r[wcol]),
+                "reached_essThreshold": reached,
+                "missed_essThreshold": not reached,
+                "hours_to_essThreshold": float(r["elapsed_hours"]),
+                "samples_to_essThreshold": int(r["sample"]),
+                "hpd_at_essThreshold": float(r[wcol]),
             }
         )
     return pd.DataFrame(rows).sort_values(keys)
@@ -1020,12 +1009,15 @@ def _n_per_config_labels(df: pd.DataFrame) -> list[str]:
 
 
 def plot_main_figure_posterior(
-    stationarity: pd.DataFrame, ess200: pd.DataFrame, out_base: Path
+    stationarity: pd.DataFrame,
+    essThreshold: pd.DataFrame,
+    out_base: Path,
+    ess_target: float,
 ) -> None:
     """2x2 main figure, posterior parameter only, no figure title:
 
     A (0,0) MCMC samples to stationarity   B (0,1) wallclock minutes to stationarity
-    C (1,0) wallclock minutes to ESS={ESS_TIME_TARGET}   D (1,1) 95% HPDI at ESS={ESS_TIME_TARGET}
+    C (1,0) wallclock minutes to ESS={ess_target}   D (1,1) 95% HPDI at ESS={ess_target}
 
     Panels A/B reuse the #5 stationarity data (hours converted to minutes for
     readability). Panels C/D drop runs that never reached the ESS target
@@ -1033,8 +1025,10 @@ def plot_main_figure_posterior(
     per config is shown as a second line in the x-tick labels.
     """
     sub_stat = stationarity[stationarity["parameter"] == POSTERIOR]
-    sub_ess200 = ess200[ess200["parameter"] == POSTERIOR]
-    sub_ess200_reached = sub_ess200[~sub_ess200["missed_ess200"]]
+    sub_essThreshold = essThreshold[essThreshold["parameter"] == POSTERIOR]
+    sub_essThreshold_reached = sub_essThreshold[
+        ~sub_essThreshold["missed_essThreshold"]
+    ]
 
     fig = plt.figure(figsize=(9.0, 7.0))
     gs = fig.add_gridspec(2, 2, hspace=0.35, wspace=0.32)
@@ -1050,19 +1044,29 @@ def plot_main_figure_posterior(
     _strip_by_config(ax_b, sub_stat, "stationarity_minutes", agg="median", log=True)
     ax_b.set_ylabel("Wallclock minutes to stationarity", fontsize=9)
 
-    sub_ess200_reached = sub_ess200_reached.assign(
-        minutes_to_ess200=sub_ess200_reached["hours_to_ess200"] * 60
+    sub_essThreshold_reached = sub_essThreshold_reached.assign(
+        minutes_to_essThreshold=sub_essThreshold_reached["hours_to_essThreshold"] * 60
     )
-    _strip_by_config(ax_c, sub_ess200_reached, "minutes_to_ess200", agg="median")
-    ax_c.set_ylabel(f"Wallclock minutes to ESS={ESS_TIME_TARGET:g}", fontsize=9)
+    _strip_by_config(
+        ax_c, sub_essThreshold_reached, "minutes_to_essThreshold", agg="median"
+    )
+    ax_c.set_ylabel(f"Wallclock minutes to ESS={ess_target:g}", fontsize=9)
     ax_c.set_xticklabels(
-        _n_per_config_labels(sub_ess200_reached), rotation=25, ha="right", fontsize=8
+        _n_per_config_labels(sub_essThreshold_reached),
+        rotation=25,
+        ha="right",
+        fontsize=8,
     )
 
-    _strip_by_config(ax_d, sub_ess200_reached, "hpd_at_ess200", agg="median")
-    ax_d.set_ylabel(f"95% HPDI width at ESS={ESS_TIME_TARGET:g}", fontsize=9)
+    _strip_by_config(
+        ax_d, sub_essThreshold_reached, "hpd_at_essThreshold", agg="median"
+    )
+    ax_d.set_ylabel(f"95% HPDI width at ESS={ess_target:g}", fontsize=9)
     ax_d.set_xticklabels(
-        _n_per_config_labels(sub_ess200_reached), rotation=25, ha="right", fontsize=8
+        _n_per_config_labels(sub_essThreshold_reached),
+        rotation=25,
+        ha="right",
+        fontsize=8,
     )
 
     _add_panel_labels(fig, [(ax_a, "A"), (ax_b, "B"), (ax_c, "C"), (ax_d, "D")])
@@ -1077,11 +1081,11 @@ def plot_main_figure_posterior(
 # =============================================================================
 
 
-def write_readme(out: Path, budget_h: float, n_sims: int) -> None:
+def write_readme(out: Path, budget_h: float, n_sims: int, ess_target: float) -> None:
     (out / "README.md").write_text(
         README_TEMPLATE.format(
             threshold=ESS_THRESHOLD,
-            ess_time_target=f"{ESS_TIME_TARGET:g}",
+            ess_time_target=f"{ess_target:g}",
             reference=REFERENCE_KEY,
             tail_frac=STATIONARITY_TAIL_FRACTION,
             consecutive=STATIONARITY_CONSECUTIVE,
@@ -1131,6 +1135,16 @@ def main() -> None:
         default=BUDGET_HOURS,
         help=f"#3 fixed global wallclock budget in hours (default {BUDGET_HOURS}).",
     )
+    ap.add_argument(
+        "--ess-target",
+        type=float,
+        default=ESS_TIME_TARGET,
+        help=(
+            "#3a target ESS for the 'time to ESS' study (default "
+            f"{ESS_TIME_TARGET:g}). Runs that never reach it within the run "
+            "report full-run wallclock/samples/HPD instead."
+        ),
+    )
     args = ap.parse_args()
     BURNIN_FRACTION = args.burnin
     MASCOT_DIR = args.mascot_dir
@@ -1179,11 +1193,9 @@ def main() -> None:
         ].to_string(index=False)
     )
 
-    # ---- #1 min-ESS + bottleneck ----
+    # ---- #1 min-ESS + bottleneck (console summary only; no plot) ----
     print("\n#1 Min-ESS across focused scientific parameters...")
     ess_per_param, min_ess_summary = analysis_min_ess(seeds, burnin_rows)
-    ess_per_param.to_csv(out / "ess_focused_by_seed.csv", index=False)
-    min_ess_summary.to_csv(out / "miness_by_seed.csv", index=False)
     miness_across = _config_order(
         summarize_across_sims(min_ess_summary, ["config", "label"], ["min_ESS"])
     )
@@ -1194,8 +1206,6 @@ def main() -> None:
         .reset_index(name="frac_runs_all_converged")
     )
     miness_across = _config_order(miness_across.merge(conv, on=["config", "label"]))
-    miness_across.to_csv(out / "miness_across_sims.csv", index=False)
-    plot_min_ess(min_ess_summary, out / "miness")
     print(
         miness_across[
             [
@@ -1208,10 +1218,9 @@ def main() -> None:
         ].to_string(index=False)
     )
 
-    # ---- #2 ESS/hour decomposition (all params) ----
+    # ---- #2 ESS/hour decomposition (console summary only; no plot) ----
     print("\n#2 ESS/hour = (ESS/sample) x (samples/hour) for all params...")
     decomp = analysis_decomposition(seeds, ess_per_param)
-    decomp.to_csv(out / "ess_hour_decomposition.csv", index=False)
     decomp_across = _config_order(
         summarize_across_sims(
             decomp,
@@ -1219,8 +1228,6 @@ def main() -> None:
             ["ESS_per_hour", "ESS_per_sample", "samples_per_hour"],
         )
     )
-    decomp_across.to_csv(out / "ess_hour_decomposition_across_sims.csv", index=False)
-    plot_decomposition(decomp, out / "decomposition")
     print(
         decomp_across[
             [
@@ -1233,10 +1240,12 @@ def main() -> None:
     )
 
     # ---- #3 per-parameter compute curves ----
-    print("\n#3 Per-parameter compute curves (ESS=200 + at-budget)...")
+    # frontier_curves is a large per-checkpoint intermediate (every trace row
+    # x every parameter of interest); it is NOT itself needed to reproduce any
+    # plot -- essThreshold_by_seed.csv / at_budget_by_seed.csv already contain
+    # everything the #3 plots read -- so it is kept in memory only, not saved.
+    print(f"\n#3 Per-parameter compute curves (ESS={args.ess_target:g} + at-budget)...")
     frontier = frontier_curves(seeds, burnin_rows)
-    frontier.to_csv(out / "frontier_curves.csv", index=False)
-    poi_order = params_of_interest(seeds[0])
 
     def hpd_label(suffix: str):
         def _lab(p):
@@ -1249,40 +1258,52 @@ def main() -> None:
 
         return _lab
 
-    # (a) time to ESS=200, per parameter (X = target not reached, full-run
-    # value shown instead)
-    ess200 = time_to_ess200(frontier)
-    ess200.to_csv(out / "ess200_by_seed.csv", index=False)
-    ess200_across = _config_order(
+    # (a) time to ESS={ess_target}, per parameter (X = target not reached,
+    # full-run value shown instead)
+    essThreshold = time_to_essThreshold(frontier, args.ess_target)
+    essThreshold.to_csv(out / "essThreshold_by_seed.csv", index=False)
+    essThreshold_across = _config_order(
         summarize_across_sims(
-            ess200,
+            essThreshold,
             ["config", "label", "parameter"],
-            ["hours_to_ess200", "samples_to_ess200", "hpd_at_ess200"],
+            ["hours_to_essThreshold", "samples_to_essThreshold", "hpd_at_essThreshold"],
         )
     )
     reached = (
-        ess200.groupby(["config", "label", "parameter"])["reached_ess200"]
+        essThreshold.groupby(["config", "label", "parameter"])["reached_essThreshold"]
         .mean()
-        .reset_index(name="frac_reached_ess200")
+        .reset_index(name="frac_reached_essThreshold")
     )
-    ess200_across = ess200_across.merge(reached, on=["config", "label", "parameter"])
-    ess200_across.to_csv(out / "ess200_across_sims.csv", index=False)
+    essThreshold_across = essThreshold_across.merge(
+        reached, on=["config", "label", "parameter"]
+    )
+    essThreshold_across.to_csv(out / "essThreshold_across_sims.csv", index=False)
     plot_per_param_panels(
-        ess200,
+        essThreshold,
         [
-            ("hours_to_ess200", "Wallclock hours to ESS=200", None),
-            ("samples_to_ess200", "MCMC samples to ESS=200", None),
-            ("hpd_at_ess200", hpd_label("at ESS=200"), None),
+            (
+                "hours_to_essThreshold",
+                f"Wallclock hours to ESS={args.ess_target:g}",
+                None,
+            ),
+            (
+                "samples_to_essThreshold",
+                f"MCMC samples to ESS={args.ess_target:g}",
+                None,
+            ),
+            ("hpd_at_essThreshold", hpd_label(f"at ESS={args.ess_target:g}"), None),
         ],
-        out / "ess200",
-        "#3a Time to ESS=200",
-        "ess200",
-        param_order=poi_order,
-        marker_col="missed_ess200",
+        out / "essThreshold",
+        f"#3a Time to ESS={args.ess_target:g}",
+        "essThreshold",
+        param_order=PLOT_PARAMS_OF_INTEREST,
+        marker_col="missed_essThreshold",
     )
 
     # ---- Main composite figure (posterior parameter, 2x2) ----
-    plot_main_figure_posterior(stationarity, ess200, out / "comp_cost_posterior")
+    plot_main_figure_posterior(
+        stationarity, essThreshold, out / "comp_cost_posterior", args.ess_target
+    )
     print("  wrote comp_cost_posterior.png/.pdf")
 
     # (b) state at the fixed global budget, per parameter
@@ -1307,15 +1328,15 @@ def main() -> None:
         out / "at_budget",
         f"#3b State after {bh}",
         "at_budget",
-        param_order=poi_order,
+        param_order=PLOT_PARAMS_OF_INTEREST,
     )
     print(
-        f"  budget = {args.budget_hours:g} h; wrote per-parameter ess200/ and "
-        f"at_budget/ figures for {len(poi_order)} parameters."
+        f"  budget = {args.budget_hours:g} h; wrote per-parameter essThreshold/ and "
+        f"at_budget/ figures for {len(PLOT_PARAMS_OF_INTEREST)} parameters."
     )
 
     # ---- README ----
-    write_readme(out, args.budget_hours, len({sd.sim for sd in seeds}))
+    write_readme(out, args.budget_hours, len({sd.sim for sd in seeds}), args.ess_target)
     print(f"\nDone. All outputs + README.md in {out}")
 
 
@@ -1395,10 +1416,11 @@ One aggregate (summed per posterior sample):
 
 | analysis | parameter set |
 |---|---|
-| #1 min-ESS bottleneck | focused set (posterior + 2 migration rates + prevalence) |
+| #1 min-ESS bottleneck (console only) | focused set (posterior + 2 migration rates + prevalence) |
 | #5 burn-in aggregation (max) | all parameters of interest |
-| #2 decomposition | posterior + migration rates + prevalence (per param) |
-| #3 per-parameter curves, #5 stationarity | the above plus the `mig_rate_total` aggregate |
+| #2 decomposition (console only) | posterior + migration rates + prevalence (per param) |
+| #3 per-parameter curves, #5 stationarity (CSV) | the above plus the `mig_rate_total` aggregate |
+| #3 per-parameter curves, #5 stationarity (PLOTS) | hardcoded subset only: posterior, `mig_rate_start_to_secondary`, `mig_rate_secondary_to_start`, `SkylinePrev.{{start,secondary}}.{{1,5,11}}` |
 
 ### HPD width metric (kind-aware headline)
 
@@ -1410,8 +1432,12 @@ One aggregate (summed per posterior sample):
   so HPD/median is undefined) -> **absolute** log-space width, which is already
   a ratio measure in linear space.
 
-Both absolute and relative widths are kept in `frontier_curves.csv`; the derived
-`hpd_at_ess200` / `hpd_at_budget` columns hold the headline width (see `kind`).
+Both absolute and relative widths feed `essThreshold_by_seed.csv` /
+`at_budget_by_seed.csv`; the derived `hpd_at_essThreshold` / `hpd_at_budget`
+columns hold the headline width (see `kind`). The per-checkpoint intermediate
+these are computed from (every trace row x every parameter of interest) is
+NOT written to disk -- it is large and not itself needed to reproduce any
+plot.
 
 ### ESS is measured on the STATIONARY part of the trace
 
@@ -1434,41 +1460,48 @@ discarding that burn-in, so they describe the stationary chain only.
 --------------------------------------------------------------------------------
 ## Output files
 
-Per-run detail CSVs (one row per sim x config x seed, or x parameter):
+Only data needed to reproduce a plot (or a printed console summary) is
+written to disk. #1 (min-ESS bottleneck) and #2 (ESS/hour decomposition) are
+printed to the console during the run but have no plot and no CSV.
 
-* `stationarity_by_seed.csv` -- #5 per parameter of interest.
+Per-run detail CSVs (one row per sim x config x seed x parameter):
+
+* `stationarity_by_seed.csv` -- #5 per parameter of interest; feeds the
+  `stationarity/` plots.
 * `burnin_by_run.csv` -- #5 run-level burn-in + driving parameter.
-* `ess_focused_by_seed.csv` -- #1 ESS of every focused parameter (post-burn-in).
-* `miness_by_seed.csv` -- #1 min-ESS + bottleneck per run.
-* `ess_hour_decomposition.csv` -- #2 absolute ESS/sample, samples/hour, ESS/hour.
-* `frontier_curves.csv` -- #3 per-parameter ESS + HPD width at each checkpoint.
-* `ess200_by_seed.csv` -- #3a per (sim, config, seed, parameter): wallclock,
+* `essThreshold_by_seed.csv` -- #3a per (sim, config, seed, parameter): wallclock,
   MCMC samples and headline HPD width at first ESS>={ess_time_target}
-  (`reached_ess200`). If never reached, these instead report the full-run
-  values (`missed_ess200=True`).
+  (`reached_essThreshold`). If never reached, these instead report the full-run
+  values (`missed_essThreshold=True`). Feeds the `essThreshold/` plots and the
+  posterior composite figure.
 * `at_budget_by_seed.csv` -- #3b per (sim, config, seed, parameter): ESS,
-  MCMC samples and headline HPD width reached by the {budget} h budget.
+  MCMC samples and headline HPD width reached by the {budget} h budget. Feeds
+  the `at_budget/` plots.
 
 Across-simulation summaries (median / IQR / mean; per config, and per config x
-parameter for #3):
+parameter for #3): `burnin_across_sims.csv`, `essThreshold_across_sims.csv`,
+`at_budget_across_sims.csv`. These are printed/tabulated but not directly
+plotted.
 
-* `burnin_across_sims.csv`, `miness_across_sims.csv`,
-  `ess_hour_decomposition_across_sims.csv`, `ess200_across_sims.csv`,
-  `at_budget_across_sims.csv`.
+Every CSV above covers ALL parameters of interest (posterior, `mig_rate_total`,
+both migration directions, every prevalence knot); the plots below are
+restricted to a hardcoded subset of scientific interest: posterior, both
+migration directions, and prevalence knots 1/5/11 for the start and secondary
+demes.
 
 Plots (`.png` + `.pdf`):
 
 * `stationarity/stationarity_<parameter>.*` -- samples & hours to stationarity
   (log scale), x = config, one dot per (sim, seed), bar = median (thin black
   line, drawn on top of the dots).
-* `miness.*` -- min focused-ESS per config across (sim, seed).
-* `decomposition.*` -- absolute ESS/hour, ESS/sample, samples/hour per config.
-* `ess200/ess200_<parameter>.*` -- #3a: per parameter, 3 subplots (hours,
+* `essThreshold/essThreshold_<parameter>.*` -- #3a: per parameter, 3 subplots (hours,
   samples, relative HPD) to reach ESS={ess_time_target}; x = config, one dot
   per (sim, seed) -- an X marks a run that never reached the target, plotting
   its full-run value instead.
 * `at_budget/at_budget_<parameter>.*` -- #3b: per parameter, 3 subplots (ESS,
   samples, relative HPD) after {budget} h; x = config, one dot per (sim, seed).
+* `comp_cost_posterior.*` -- 2x2 composite figure (posterior parameter only):
+  samples/wallclock to stationarity, wallclock/HPD at the ESS target.
 
 --------------------------------------------------------------------------------
 ## Reproduce
@@ -1476,7 +1509,7 @@ Plots (`.png` + `.pdf`):
     conda run -n biopython_env python bin/sampler_efficiency.py \
         --output-dir <this directory>
 
-Options: `--sims`, `--mascot-dir`, `--burnin`, `--budget-hours`.
+Options: `--sims`, `--mascot-dir`, `--burnin`, `--budget-hours`, `--ess-target`.
 """
 
 

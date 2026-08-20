@@ -1,4 +1,4 @@
-// Nextflow pipeline for structured SIR simulations: generate BEAST2 XMLs from contact matrices
+// Nextflow pipeline for evaluating MASCOT-DS on simulated, structured two-deme SIR outbreaks.
 
 nextflow.enable.dsl=2
 
@@ -6,6 +6,7 @@ nextflow.enable.dsl=2
 // Helper functions
 // ---------------------------------------------------------------------------
 
+// Parse base_name and variant_type from an XML/log basename.
 // Fallback for edge cases where metadata is not available through channels.
 def parseVariant(String name) {
     if (name.endsWith('_original')) {
@@ -18,6 +19,7 @@ def parseVariant(String name) {
     return [name, 'unknown']
 }
 
+// Empty-file machinery eliminated for datastream files.
 // All variants receive the real datastream files; the variant_type argument
 // tells create_mascot_xml_fixedtree.py which datastreams to actually use.
 // For analysis, real files serve as ground truth regardless of MASCOT variant.
@@ -151,6 +153,8 @@ process CONCATENATE_SIM_METADATA {
     """
 }
 
+// MAKE_MASCOT_XML now emits base_name and variant_type as val() outputs
+// Clip dimension removed — always passes --clip-trans-rate false
 process MAKE_MASCOT_XML {
     tag "${nexus.baseName}_${variant_type}"
     publishDir "${params.outdir}/2_mascot/${nexus.baseName}/${variant_type}", mode: 'copy', pattern: '*.xml'
@@ -220,7 +224,7 @@ process COMBINE_LOGS {
     if [ -n "\$main_logs" ]; then
         log_args=""
         for f in \$main_logs; do log_args="\$log_args -log \$f"; done
-        ${params.logcombiner_path} -b ${params.log_burnin} -resample ${params.logcombiner_resample} \$log_args -o "${xmlname}.mascot_logs.combined.log"
+        "${params.logcombiner_path}" -b ${params.log_burnin} -resample ${params.logcombiner_resample} \$log_args -o "${xmlname}.mascot_logs.combined.log"
     fi
 
     # Per-deme log types (NeDynamics and cumulativeIncidence)
@@ -229,7 +233,7 @@ process COMBINE_LOGS {
         if [ -n "\$type_logs" ]; then
             log_args=""
             for f in \$type_logs; do log_args="\$log_args -log \$f"; done
-            ${params.logcombiner_path} -b ${params.log_burnin} -resample ${params.logcombiner_resample} \$log_args -o "${xmlname}.\${logtype}.combined.log"
+            "${params.logcombiner_path}" -b ${params.log_burnin} -resample ${params.logcombiner_resample} \$log_args -o "${xmlname}.\${logtype}.combined.log"
         fi
     done
     """
@@ -248,7 +252,7 @@ process COMBINE_TREES {
     script:
     def treeArgs = trees.collect { f -> "-log \"${f}\"" }.join(' ')
     """
-    ${params.logcombiner_path} -b ${params.tree_burnin} -resample ${params.logcombiner_resample} ${treeArgs} -o "${xmlname}.combined.trees"
+    "${params.logcombiner_path}" -b ${params.tree_burnin} -resample ${params.logcombiner_resample} ${treeArgs} -o "${xmlname}.combined.trees"
     """
 }
 
@@ -264,7 +268,7 @@ process ANNOTATE_TREES {
 
     script:
     """
-    ${params.treeannotator_path} -burnin ${params.tree_burnin} -height mean -lowMem true ${combined_trees} "${xmlname}.mcc.trees"
+    "${params.treeannotator_path}" -burnin ${params.tree_burnin} -height mean -lowMem true ${combined_trees} "${xmlname}.mcc.trees"
     """
 }
 
@@ -438,6 +442,7 @@ process PLOT_ESS_HEATMAP {
     """
 }
 
+// Per-simulation publication figures (prevalence, Ne, cumIncidence per deme)
 // Same inputs as ANALYSE_POSTERIORS — reuses parse_arguments() from analyse_posteriors.py
 process MAKE_INDIVIDUAL_SIM_FIGURES {
     tag "${meta.base}_${meta.variant}"
@@ -469,6 +474,7 @@ process MAKE_INDIVIDUAL_SIM_FIGURES {
     """
 }
 
+// Combine Ne HPD validation CSVs from original + datastreams into one CSV with Model column
 process COMBINE_HPD_NE_BY_MODEL {
     tag "Ne by model"
     publishDir "${params.outdir}/3_analysis", mode: 'copy'
@@ -488,6 +494,7 @@ process COMBINE_HPD_NE_BY_MODEL {
     """
 }
 
+// Quantify information content by comparing HPD widths across leave-one-out variants
 // Uses a single flat path input to avoid combine() flattening separate collected lists.
 // Files are sorted into params/prevalence/migration_rates by filename prefix.
 process QUANTIFY_INFORMATION_CONTENT {
@@ -516,6 +523,7 @@ process QUANTIFY_INFORMATION_CONTENT {
     """
 }
 
+// True vs estimated scatter plots, migration bias/uncertainty, prevalence/Ne coverage over time
 process MAKE_FIGURE_TRUE_VS_ESTIMATE {
     tag "true vs estimate"
     publishDir "${params.outdir}/5_simulation_study", mode: 'copy'
@@ -540,6 +548,8 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
     """
 }
 
+// Composite value-of-information figures across MASCOT-DS variants
+// (main + supplementary gridspec panels; see make_composite_figures_voi.py).
 // All required CSVs (params/prevalence/migration_rates per datastream variant
 // + sim metadata) are staged flat into the work dir, so --analysis_dir is '.'.
 process MAKE_COMPOSITE_FIGURES_VOI {
@@ -568,6 +578,14 @@ process MAKE_COMPOSITE_FIGURES_VOI {
 // Main workflow
 // ---------------------------------------------------------------------------
 workflow {
+    // BEAST2 is not containerized (see nextflow.config) — fail fast with a
+    // clear message instead of launching SAMPLE_SIMPARAMS/MAKE_SIM_XML and
+    // only then failing on RUN_REMASTER with a cryptic `"null" -overwrite...`
+    // command when these params were left unset.
+    if (!params.beast_path)         { error "params.beast_path is not set — point it at your local BEAST2 install, e.g. --beast_path /path/to/beast/bin/beast (see README.md)." }
+    if (!params.logcombiner_path)   { error "params.logcombiner_path is not set — e.g. --logcombiner_path /path/to/beast/bin/logcombiner (see README.md)." }
+    if (!params.treeannotator_path) { error "params.treeannotator_path is not set — e.g. --treeannotator_path /path/to/beast/bin/treeannotator (see README.md)." }
+
     // Build tuples for sampling
     tuples_to_sample = Channel.from(1..10).map { n ->
         tuple(n, params.ndemes, params.population_sizes, 41 + n)
@@ -578,10 +596,9 @@ workflow {
     beast_outputs = RUN_REMASTER(xmls)
     groundtruth_tree = PLOT_TREES_GROUNDTRUTH(beast_outputs.remaster_outputs)
     ds_outputs = SIMULATE_DATASTREAMS(beast_outputs.remaster_outputs)
+    CONCATENATE_SIM_METADATA(ds_outputs.sim_metadata.collect())
 
     // ── Create variants ─────────────────────────────────────────────────
-    // All variants receive the real datastream files; variant_type controls
-    //       which ones the script actually uses. No empty files needed.
     datastream_variants = ds_outputs.datastreams.flatMap { t ->
         def (simNb, nd, params_csv, tr, tj, nx, cc, sp, ww) = t
         [
@@ -625,6 +642,7 @@ workflow {
     combined = COMBINE_LOGS(all_combinable_logs)
 
     // ── Tree combining ──────────────────────────────────────────────────
+    // Metadata from channel, no filename re-parsing needed
     trees_grouped = mascot_runs.mascot_trees
         .map { base_name, variant_type, xmlname, file ->
             tuple(xmlname, file, base_name, variant_type)
@@ -637,6 +655,7 @@ workflow {
 }
 
 // ---------------------------------------------------------------------------
+// Re-analysis workflow: reads from published results directory
 // Usage:
 //   nextflow run main.nf -entry ANALYSE_FROM_BEASTOUTPUTS \
 //       --outdir /path/to/published/results
@@ -793,7 +812,7 @@ workflow ANALYSE_FROM_BEASTOUTPUTS {
 
     PLOT_HPD_VALIDATION(plot_inputs)
 
-    // ── [2] Combine Ne HPD validation: original + datastreams → Model column
+    // ── Combine Ne HPD validation: original + datastreams → Model column
     ne_original = concatenated_csvs.concatenated_csv
         .filter { it[0] == 'ne' && it[1] == 'original' }
         .map { it[2] }
@@ -805,7 +824,7 @@ workflow ANALYSE_FROM_BEASTOUTPUTS {
     combine_ne_input = ne_original.combine(ne_datastreams)
     combined_ne = COMBINE_HPD_NE_BY_MODEL(combine_ne_input)
 
-    // ── [2] True vs estimated parameter figures ─────────────────────────
+    // ── True vs estimated parameter figures ─────────────────────────
     fig_params_csv = concatenated_csvs.concatenated_csv
         .filter { it[0] == 'params' && it[1] == 'datastreams' }
         .map { it[2] }
@@ -830,7 +849,7 @@ workflow ANALYSE_FROM_BEASTOUTPUTS {
 
     MAKE_FIGURE_TRUE_VS_ESTIMATE(fig_truevsest_input)
 
-    // ── [2] Composite value-of-datastreams figures across MASCOT-DS variants
+    // ── Composite value-of-datastreams figures across MASCOT-DS variants
     // Collect params/prevalence/migration_rates CSVs for every datastream
     // variant plus the sim metadata into one flat list (staged into the work
     // dir), so make_composite_figures_voi.py can read them via --analysis_dir .

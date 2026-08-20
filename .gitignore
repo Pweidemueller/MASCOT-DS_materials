@@ -4,5 +4,8 @@
 __pycache__/
 *.py[cod]
 */results*
+*/work/
 /simulation_study/empty_files
 /sandbox
+.claude
+TODO.md
