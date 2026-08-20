@@ -1,0 +1,314 @@
+<?xml version="1.0" ?>
+<beast beautitemplate="Standard" beautistatus="" namespace="beast.core:beast.evolution.alignment:beast.evolution.tree.coalescent:beast.core.util:beast.evolution.nuc:beast.evolution.operators:beast.evolution.sitemodel:beast.evolution.substitutionmodel:beast.base.evolution.alignment:beast.pkgmgmt:beast.base.core:beast.base.inference:beast.base.evolution.tree.coalescent:beast.pkgmgmt:beast.base.core:beast.base.inference.util:beast.evolution.nuc:beast.base.evolution.operator:beast.base.inference.operator:beast.base.evolution.sitemodel:beast.base.evolution.substitutionmodel:beast.base.evolution.likelihood" required="BEAST.base v2.7.7:Mascot v3.0.7:TargetedBeast v1.0.0" version="2.7">
+  <data id="SimDataset" spec="Alignment" name="alignment">
+    <sequence id="seq_leaf_0" spec="Sequence" taxon="leaf_0" totalcount="4" value="???"/>
+  </data>
+  <map name="Uniform">beast.base.inference.distribution.Uniform</map>
+  <map name="Exponential">beast.base.inference.distribution.Exponential</map>
+  <map name="LogNormal">beast.base.inference.distribution.LogNormalDistributionModel</map>
+  <map name="Normal">beast.base.inference.distribution.Normal</map>
+  <map name="Beta">beast.base.inference.distribution.Beta</map>
+  <map name="Gamma">beast.base.inference.distribution.Gamma</map>
+  <map name="LaplaceDistribution">beast.base.inference.distribution.LaplaceDistribution</map>
+  <map name="prior">beast.base.inference.distribution.Prior</map>
+  <map name="InverseGamma">beast.base.inference.distribution.InverseGamma</map>
+  <map name="OneOnX">beast.base.inference.distribution.OneOnX</map>
+  <run id="mcmc" spec="MCMC" chainLength="1000000">
+    <state id="state" spec="State" storeEvery="5000">
+      <tree id="Tree.t:SimDataset" spec="beast.base.evolution.tree.Tree" name="stateNode">
+        <trait id="dateTrait.t:SimDataset" spec="beast.base.evolution.tree.TraitSet" traitname="date" value="leaf_0=2015/04/01">
+          <taxa id="TaxonSet.SimDataset" spec="TaxonSet">
+            <data idref="SimDataset" name="alignment"/>
+          </taxa>
+        </trait>
+        <taxonset idref="TaxonSet.SimDataset"/>
+      </tree>
+      <parameter id="clockRate.c:SimDataset" spec="parameter.RealParameter" lower="0.0" name="stateNode">0.001</parameter>
+      <parameter id="gammaShape.s:SimDataset" spec="parameter.RealParameter" lower="0.1" name="stateNode">1.0</parameter>
+      <parameter id="kappa.s:SimDataset" spec="parameter.RealParameter" lower="0.0" name="stateNode">2.0</parameter>
+      <parameter id="freqParameter.s:SimDataset" spec="parameter.RealParameter" dimension="4" lower="0.0" name="stateNode" upper="1.0">0.25</parameter>
+      <parameter id="migrationRatesSkyline.t:SimDataset" spec="parameter.RealParameter" dimension="2" lower="0.0" name="stateNode">0.1</parameter>
+      <parameter id="SkylinePrev.Deme1.t:SimDataset" spec="parameter.RealParameter" dimension="11" lower="-15" name="stateNode" upper="Infinity">1.0</parameter>
+      <parameter id="NeScaler.Deme1.t:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode">0.1</parameter>
+      <parameter id="NeScaler.MEAN.t:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode">0.1</parameter>
+      <parameter id="uninfectiousRate.t:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">73.0</parameter>
+      <parameter id="caseCounts.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">5</parameter>
+      <parameter id="caseTimes.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">0.0</parameter>
+      <parameter id="caseCounts.scaling.Deme1:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode">1</parameter>
+      <parameter id="caseCounts.dispersion:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode">0.25</parameter>
+      <parameter id="seroTestedCounts.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">5</parameter>
+      <parameter id="seroWithAntibodiesCounts.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">3</parameter>
+      <parameter id="seroTestedTimes.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">0.0</parameter>
+      <parameter id="seroprevalence.scaling.Deme1:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode" estimate="false">1</parameter>
+      <parameter id="wastewaterConcentration.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">0.01</parameter>
+      <parameter id="wastewaterConcentrationTimes.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="stateNode">0.0500</parameter>
+      <parameter id="wastewater.scaling.Deme1:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode">100</parameter>
+      <parameter id="wastewater.sigma:SimDataset" spec="parameter.RealParameter" dimension="1" lower="0.0" name="stateNode">1</parameter>
+      <parameter id="PopSize.Deme1:SimDataset" spec="parameter.RealParameter" estimate="false" dimension="1" name="stateNode">50000.0</parameter>
+    </state>
+    <init id="RandomTree.t:SimDataset" spec="RandomTree" estimate="false" initial="@Tree.t:SimDataset" taxa="@SimDataset">
+      <populationModel id="ConstantPopulation0.t:SimDataset" spec="ConstantPopulation">
+        <parameter id="randomPopSize.t:SimDataset" spec="parameter.RealParameter" name="popSize">1.0</parameter>
+      </populationModel>
+    </init>
+    <distribution id="posterior" spec="CompoundDistribution">
+      <distribution id="prior" spec="CompoundDistribution">
+        <distribution id="regularizeTransmissionRate.Deme1.t:SimDataset" spec="mascotdatastreams.util.TransmissionSmallerThan">
+          <spline idref="splinePrev.Deme1.t:SimDataset"/>
+        </distribution>
+        <distribution id="caseCountLikelihood.Deme1.t:SimDataset" spec="mascotdatastreams.distribution.CaseCountLikelihood">
+          <prevalenceSpline idref="splinePrev.Deme1.t:SimDataset"/>
+          <caseCounts idref="caseCounts.Deme1:SimDataset"/>
+          <caseTimes idref="caseTimes.Deme1:SimDataset"/>
+          <scaling idref="caseCounts.scaling.Deme1:SimDataset"/>
+          <distribution id="gammaPoisson.Deme1.t:SimDataset" spec="mascotdatastreams.distribution.GammaPoisson" dispersion="@caseCounts.dispersion:SimDataset"/>
+        </distribution>
+        <distribution id="seroprevalenceLikelihood.Deme1.t:SimDataset" spec="mascotdatastreams.distribution.SeroprevalenceLikelihood">
+          <prevalenceSpline idref="splinePrev.Deme1.t:SimDataset"/>
+          <seroPeopleTested idref="seroTestedCounts.Deme1:SimDataset"/>
+          <seroPeopleSeropositive idref="seroWithAntibodiesCounts.Deme1:SimDataset"/>
+          <seroTimes idref="seroTestedTimes.Deme1:SimDataset"/>
+          <populationSize idref="PopSize.Deme1:SimDataset"/>
+          <scaling idref="seroprevalence.scaling.Deme1:SimDataset"/>
+          <distribution id="binomial.seroprevalenceLikelihood.Deme1.t:SimDataset" spec="mascotdatastreams.distribution.Binomial"/>
+        </distribution>
+        <distribution id="wastewaterLikelihood.Deme1.t:SimDataset" spec="mascotdatastreams.distribution.WastewaterLikelihood">
+          <prevalenceSpline idref="splinePrev.Deme1.t:SimDataset"/>
+          <concentrations idref="wastewaterConcentration.Deme1:SimDataset"/>
+          <concentrationTimes idref="wastewaterConcentrationTimes.Deme1:SimDataset"/>
+          <populationSize idref="PopSize.Deme1:SimDataset"/>
+          <scaling idref="wastewater.scaling.Deme1:SimDataset"/>
+          <distribution id="logNormal.wastewaterLikelihood.Deme1.t:SimDataset" spec="mascotdatastreams.distribution.LogNormal" sd="@wastewater.sigma:SimDataset"/>
+        </distribution>
+        <distribution id="Mascot.t:SimDataset" spec="mascotdatastreams.distribution.MascotLogPflag" tree="@Tree.t:SimDataset" compute_likelihood="true">
+          <dynamics id="StructuredSkyline.t:SimDataset" spec="mascotdatastreams.distribution.StructuredSkylinePrevalence" dimension="2" forwardsMigration="@migrationRatesSkyline.t:SimDataset" fromBeauti="false" types="Deme1" maxRate="1000">
+            <NeDynamics id="NeDynamicsList.t:SimDataset" spec="mascot.util.InitializedNeDynamicsList">
+              <neDynamics id="NeDynamics.Deme1.t:SimDataset" spec="mascotdatastreams.dynamics.SplinePrevalenceToNe">
+                <NeScaler idref="NeScaler.Deme1.t:SimDataset"/>
+                <spline id="splinePrev.Deme1.t:SimDataset" spec="mascotdatastreams.dynamics.Spline" clipTransRate="false">
+                  <logInfected idref="SkylinePrev.Deme1.t:SimDataset"/>
+                  <rateShifts id="SkygrowthRateShifts" spec="mascot.dynamics.RateShifts">0.0000 0.0100 0.0200 0.0300 0.0400 0.0500 0.0600 0.0700 0.0800 0.0900 0.1001</rateShifts>
+                  <gridRateShifts id="SplineGridRateShifts" spec="mascot.dynamics.RateShifts">0.0000 0.0010 0.0020 0.0030 0.0040 0.0050 0.0060 0.0070 0.0080 0.0090 0.0100</gridRateShifts>
+                  <uninfectiousRate idref="uninfectiousRate.t:SimDataset"/>
+                </spline>
+                <coalescentScale spec="parameter.RealParameter">2.0</coalescentScale>
+              </neDynamics>
+            </NeDynamics>
+            <rateShifts id="mascotshifts" spec="mascot.dynamics.RateShifts">0.0 1.0</rateShifts>
+            <indicators id="indicatorsSkyline.t:SimDataset" spec="parameter.BooleanParameter" dimension="2" estimate="false">true</indicators>
+            <typeTrait id="typeTraitSet.t:SimDataset" spec="mascot.util.InitializedTraitSet" traitname="type" value="leaf_0=I0">
+              <taxa id="TaxonSet.1" spec="TaxonSet" alignment="@SimDataset"/>
+            </typeTrait>
+          </dynamics>
+          <structuredTreeIntervals id="StructuredTreeIntervals.t:SimDataset" spec="mascot.distribution.StructuredTreeIntervals" tree="@Tree.t:SimDataset"/>
+        </distribution>
+        <prior id="CaseCountDispersionPrior.s:SimDataset" name="distribution" x="@caseCounts.dispersion:SimDataset">
+          <LogNormal id="LogNormalDistributionModel.3" name="distr">
+            <parameter id="RealParameter.100" spec="parameter.RealParameter" estimate="false" name="M">-1.0</parameter>
+            <parameter id="RealParameter.101" spec="parameter.RealParameter" estimate="false" name="S">0.5</parameter>
+          </LogNormal>
+        </prior>
+        <prior id="CaseCountsScaling.Deme1.Prior:SimDataset" name="distribution" x="@caseCounts.scaling.Deme1:SimDataset">
+          <LogNormal id="CaseCountsScaling.Deme1.LogNormal" name="distr">
+            <parameter id="CaseCountsScaling.Deme1.MeanLog" spec="parameter.RealParameter" estimate="false" name="M">-3.0</parameter>
+            <parameter id="CaseCountsScaling.Deme1.SDLog" spec="parameter.RealParameter" estimate="false" name="S">0.5</parameter>
+          </LogNormal>
+        </prior>
+        <!-- <prior id="SeroprevalenceScaling.Deme1.Prior:SimDataset" name="distribution" x="@seroprevalence.scaling.Deme1:SimDataset">
+          <LogNormal id="SeroprevalenceScaling.Deme1.LogNormal" name="distr">
+            <parameter id="SeroprevalenceScaling.Deme1.MeanLog" spec="parameter.RealParameter" estimate="false" name="M">0.0</parameter>
+            <parameter id="SeroprevalenceScaling.Deme1.SDLog" spec="parameter.RealParameter" estimate="false" name="S">0.5</parameter>
+          </LogNormal>
+        </prior> -->
+        <prior id="WastewaterScaling.Deme1.Prior:SimDataset" name="distribution" x="@wastewater.scaling.Deme1:SimDataset">
+          <LogNormal id="WastewaterScaling.Deme1.LogNormal" name="distr">
+            <parameter id="WastewaterScaling.Deme1.MeanLog" spec="parameter.RealParameter" estimate="false" name="M">7.0</parameter>
+            <parameter id="WastewaterScaling.Deme1.SDLog" spec="parameter.RealParameter" estimate="false" name="S">1.0</parameter>
+          </LogNormal>
+        </prior>
+        <prior id="WastewaterSigmaPrior.s:SimDataset" name="distribution" x="@wastewater.sigma:SimDataset">
+          <LogNormal id="WastewaterSigmaLogNormal" name="distr">
+            <parameter id="WastewaterSigmaMeanLog" spec="parameter.RealParameter" estimate="false" name="M">-0.7</parameter>
+            <parameter id="WastewaterSigmaSDLog" spec="parameter.RealParameter" estimate="false" name="S">0.5</parameter>
+          </LogNormal>
+        </prior>
+        <prior id="migrationRatesSkylinePrior.t:SimDataset" name="distribution" x="@migrationRatesSkyline.t:SimDataset">
+          <LogNormal id="LogNormal.3" name="distr" meanInRealSpace="true">
+            <parameter id="RealParameter.8" spec="parameter.RealParameter" estimate="false" name="M">2.0</parameter>
+            <parameter id="RealParameter.88" spec="parameter.RealParameter" estimate="false" name="S">1.0</parameter>
+          </LogNormal>
+        </prior>
+        <prior id="FrequenciesPrior.s:SimDataset" name="distribution" x="@freqParameter.s:SimDataset">
+          <distr id="Dirichlet.0" spec="distribution.Dirichlet">
+            <parameter id="RealParameter.7" spec="parameter.RealParameter" dimension="4" estimate="false" name="alpha">4.0 4.0 4.0 4.0</parameter>
+          </distr>
+        </prior>
+        <prior id="GammaShapePrior.s:SimDataset" name="distribution" x="@gammaShape.s:SimDataset">
+          <Exponential id="Exponential.0" name="distr">
+            <parameter id="RealParameter.0" spec="parameter.RealParameter" estimate="false" name="mean">1.0</parameter>
+          </Exponential>
+        </prior>
+        <prior id="KappaPrior.s:SimDataset" name="distribution" x="@kappa.s:SimDataset">
+          <LogNormal id="LogNormalDistributionModel.1" name="distr">
+            <parameter id="RealParameter.5" spec="parameter.RealParameter" estimate="false" name="M">1.0</parameter>
+            <parameter id="RealParameter.6" spec="parameter.RealParameter" estimate="false" name="S">1.25</parameter>
+          </LogNormal>
+        </prior>
+        <prior id="NeScalerMeanPrior.t:SimDataset" name="distribution" x="@NeScaler.MEAN.t:SimDataset">
+          <LogNormal id="NeScalerMean.LogNormal" name="distr" meanInRealSpace="true">
+            <parameter id="NeScalerMean.MeanLog" spec="parameter.RealParameter" estimate="false" name="M">0.1</parameter>
+            <parameter id="NeScalerMean.SDLog" spec="parameter.RealParameter" estimate="false" name="S">1.0</parameter>
+          </LogNormal>
+        </prior>
+        <prior id="NeScaler.Deme1.Prior.t:SimDataset" name="distribution" x="@NeScaler.Deme1.t:SimDataset">
+          <LogNormal id="NeScaler.Deme1.LogNormal" name="distr" meanInRealSpace="true" M="@NeScaler.MEAN.t:SimDataset">
+            <parameter id="NeScaler.Deme1.SDLog" spec="parameter.RealParameter" estimate="false" name="S">0.25</parameter>
+          </LogNormal>
+        </prior>
+      </distribution>
+      <distribution id="ConsensusWeights.t:SimDataset" spec="targetedbeast.edgeweights.ConsensusWeights" tree="@Tree.t:SimDataset" data="@SimDataset"/>
+      <distribution id="likelihood" spec="CompoundDistribution" useThreads="true">
+        <distribution id="treeLikelihood.SimDataset" spec="ThreadedTreeLikelihood" data="@SimDataset" tree="@Tree.t:SimDataset">
+          <siteModel id="SiteModel.s:SimDataset" spec="SiteModel" gammaCategoryCount="4" shape="@gammaShape.s:SimDataset">
+            <parameter id="mutationRate.s:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="mutationRate">1.0</parameter>
+            <parameter id="proportionInvariant.s:SimDataset" spec="parameter.RealParameter" estimate="false" lower="0.0" name="proportionInvariant" upper="1.0">0.0</parameter>
+            <substModel id="hky.s:SimDataset" spec="HKY" kappa="@kappa.s:SimDataset">
+              <frequencies id="estimatedFreqs.s:SimDataset" spec="Frequencies" frequencies="@freqParameter.s:SimDataset"/>
+            </substModel>
+          </siteModel>
+          <branchRateModel id="StrictClock.c:SimDataset" spec="beast.base.evolution.branchratemodel.StrictClockModel" clock.rate="@clockRate.c:SimDataset"/>
+        </distribution>
+      </distribution>
+    </distribution>
+    <operator id="StrictClockRateScaler.c:SimDataset" spec="AdaptableOperatorSampler" weight="1.5">
+      <parameter idref="clockRate.c:SimDataset"/>
+      <operator id="AVMNOperator.SimDataset" spec="kernel.AdaptableVarianceMultivariateNormalOperator" allowNonsense="true" beta="0.05" burnin="400" initial="800" weight="0.1">
+        <transformations id="AVMNSumTransform.SimDataset" spec="operator.kernel.Transform$LogConstrainedSumTransform">
+          <parameter idref="freqParameter.s:SimDataset" name="f"/>
+        </transformations>
+        <transformations id="AVMNLogTransform.SimDataset" spec="operator.kernel.Transform$LogTransform">
+          <parameter idref="clockRate.c:SimDataset" name="f"/>
+          <parameter idref="gammaShape.s:SimDataset" name="f"/>
+          <parameter idref="kappa.s:SimDataset" name="f"/>
+        </transformations>
+        <!-- <transformations id="AVMNNoTransform.SimDataset" spec="operator.kernel.Transform$NoTransform">
+          <tree idref="Tree.t:SimDataset" name="f"/>
+        </transformations> -->
+      </operator>
+      <operator id="StrictClockRateScalerX.c:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@clockRate.c:SimDataset" upper="10.0" weight="3.0"/>
+    </operator>
+    <operator id="gammaShapeScaler.s:SimDataset" spec="AdaptableOperatorSampler" weight="0.05">
+      <parameter idref="gammaShape.s:SimDataset"/>
+      <operator idref="AVMNOperator.SimDataset"/>
+      <operator id="gammaShapeScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@gammaShape.s:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.1"/>
+    </operator>
+    <operator id="KappaScaler.s:SimDataset" spec="AdaptableOperatorSampler" weight="0.05">
+      <parameter idref="kappa.s:SimDataset"/>
+      <operator idref="AVMNOperator.SimDataset"/>
+      <operator id="KappaScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@kappa.s:SimDataset" scaleFactor="0.1" upper="10.0" weight="0.1"/>
+    </operator>
+    <operator id="FrequenciesExchanger.s:SimDataset" spec="AdaptableOperatorSampler" weight="0.05">
+      <parameter idref="freqParameter.s:SimDataset"/>
+      <operator idref="AVMNOperator.SimDataset"/>
+      <operator id="FrequenciesExchangerX.s:SimDataset" spec="operator.kernel.BactrianDeltaExchangeOperator" delta="0.01" weight="0.1">
+        <parameter idref="freqParameter.s:SimDataset"/>
+      </operator>
+    </operator>
+    <operator id="MascotScaleAll.t:SimDataset" spec="targetedbeast.operators.BactrianIntervalScaleOperator" tree="@Tree.t:SimDataset" scaleFactor="0.9" weight="5.0" down="@clockRate.c:SimDataset"/>
+    <operator id="MascotIntervalScaleOperator.t:SimDataset" spec="targetedbeast.operators.BactrianIntervalScaleOperator" scaleFactor="0.9" tree="@Tree.t:SimDataset" scaleAllNodesIndependently="true" weight="3.0"/>
+    <operator id="MascotRangeSlide.t:SimDataset" spec="targetedbeast.operators.RangeSlide" tree="@Tree.t:SimDataset" edgeWeights="@ConsensusWeights.t:SimDataset" weight="30.0"/>
+    <operator id="MascotWeightBasedNarrow.t:SimDataset" spec="targetedbeast.operators.WeightBasedNodeRandomizer" tree="@Tree.t:SimDataset" edgeWeights="@ConsensusWeights.t:SimDataset" percentage="0.01" weight="1.0"/>
+    <operator id="MascotHeightBasedNarrow.t:SimDataset" spec="targetedbeast.operators.HeightBasedNodeRandomizer" tree="@Tree.t:SimDataset" percentage="0.01" weight="1.0"/>
+    <operator id="MascotUntargetedWide.t:SimDataset" spec="targetedbeast.operators.WeightedWideOperator" tree="@Tree.t:SimDataset" weight="1.0"/>
+    <operator id="MascotTargetedWide.t:SimDataset" spec="targetedbeast.operators.WeightedWideOperator" tree="@Tree.t:SimDataset" edgeWeights="@ConsensusWeights.t:SimDataset" weight="3.0"/>
+    <operator id="MascotTargetedWilsonBalding.t:SimDataset" spec="targetedbeast.operators.TargetedWilsonBalding" tree="@Tree.t:SimDataset" edgeWeights="@ConsensusWeights.t:SimDataset" weight="7.0"/>
+    <operator id="MascotTargetedWilsonBalding2.t:SimDataset" spec="targetedbeast.operators.TargetedWilsonBalding" tree="@Tree.t:SimDataset" edgeWeights="@ConsensusWeights.t:SimDataset" useEdgeLength="true" weight="2.0"/>
+    <operator id="AVMNOperator.Mascot.SimDataset" spec="kernel.AdaptableVarianceMultivariateNormalOperator" allowNonsense="true" beta="0.1" burnin="800" initial="1600" weight="5.0">
+      <transformations id="AVMNSumTransform.Mascot.SimDataset" spec="operator.kernel.Transform$LogConstrainedSumTransform"/>
+      <transformations id="AVMNLogTransform.Mascot.SimDataset" spec="operator.kernel.Transform$LogTransform">
+        <parameter idref="migrationRatesSkyline.t:SimDataset" name="f"/>
+        <parameter idref="caseCounts.scaling.Deme1:SimDataset" name="f"/>
+        <parameter idref="caseCounts.dispersion:SimDataset" name="f"/>
+        <!-- <parameter idref="seroprevalence.scaling.Deme1:SimDataset" name="f"/> -->
+        <parameter idref="wastewater.scaling.Deme1:SimDataset" name="f"/>
+        <parameter idref="wastewater.sigma:SimDataset" name="f"/>
+        <parameter idref="NeScaler.MEAN.t:SimDataset" name="f"/>
+        <parameter idref="NeScaler.Deme1.t:SimDataset" name="f"/>
+      </transformations>
+      <transformations id="AVMNNoTransform.Mascot.SimDataset" spec="operator.kernel.Transform$NoTransform">
+        <parameter idref="SkylinePrev.Deme1.t:SimDataset" name="f"/>
+      </transformations>
+    </operator>
+    <operator id="UpDownPrevScaling.Deme1:SimDataset" spec="mascotdatastreams.operators.UpDownLogScaleOperator" scaleFactor="0.2" weight="1.5" optimise="true">
+      <upLogParameter idref="SkylinePrev.Deme1.t:SimDataset"/>
+      <downRealParameter idref="caseCounts.scaling.Deme1:SimDataset"/>
+      <downRealParameter idref="seroprevalence.scaling.Deme1:SimDataset"/>
+      <downRealParameter idref="wastewater.scaling.Deme1:SimDataset"/>
+    </operator>
+    <operator id="CaseCountsDispersionScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@caseCounts.dispersion:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.5"/>
+    <operator id="WasterwaterSigmaScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@wastewater.sigma:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.5"/>
+    <operator id="migrationRatesScaler.s:SimDataset" spec="AdaptableOperatorSampler" weight="1.5">
+      <parameter idref="migrationRatesSkyline.t:SimDataset"/>
+      <operator idref="AVMNOperator.Mascot.SimDataset"/>
+      <operator id="migrationRatesScalerX.s:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@migrationRatesSkyline.t:SimDataset" scaleFactor="0.5" upper="10.0" weight="1.0"/>
+    </operator>
+    <operator id="SkylinePrev.Deme1.Scaler.t:SimDataset" spec="AdaptableOperatorSampler" weight="1.0">
+      <parameter idref="SkylinePrev.Deme1.t:SimDataset"/>
+      <operator id="SkylinePrev.Deme1.ScalerX.t:SimDataset" spec="operator.kernel.BactrianRandomWalkOperator" parameter="@SkylinePrev.Deme1.t:SimDataset" scaleFactor="0.5" weight="1.0"/>
+      <operator idref="AVMNOperator.Mascot.SimDataset"/>
+    </operator>
+    <operator id="NeScalerMean.Scaler.t:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@NeScaler.MEAN.t:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.75"/>
+    <operator id="NeScaler.Deme1.Scaler.t:SimDataset" spec="kernel.BactrianScaleOperator" parameter="@NeScaler.Deme1.t:SimDataset" scaleFactor="0.5" upper="10.0" weight="0.75"/>
+    <operator id="SkylinePrev.Deme1.ScalerXX.t:SimDataset" spec="mascotdatastreams.operators.BactrianRandomWalkBlockOperator" parameter="@SkylinePrev.Deme1.t:SimDataset" scaleFactor="0.3" weight="1.0"/>
+    <logger id="tracelog" spec="Logger" fileName="$(filebase).log" logEvery="1000" model="@posterior" sanitiseHeaders="true" sort="smart">
+      <log idref="posterior"/>
+      <log idref="likelihood"/>
+      <log idref="prior"/>
+      <log idref="treeLikelihood.SimDataset"/>
+      <log id="TreeHeight.t:SimDataset" spec="beast.base.evolution.tree.TreeStatLogger" tree="@Tree.t:SimDataset"/>
+      <parameter idref="clockRate.c:SimDataset" name="log"/>
+      <parameter idref="gammaShape.s:SimDataset" name="log"/>
+      <parameter idref="kappa.s:SimDataset" name="log"/>
+      <parameter idref="freqParameter.s:SimDataset" name="log"/>
+      <log idref="caseCountLikelihood.Deme1.t:SimDataset"/>
+      <parameter idref="caseCounts.scaling.Deme1:SimDataset" name="log"/>
+      <parameter idref="caseCounts.dispersion:SimDataset" name="log"/>
+      <log idref="seroprevalenceLikelihood.Deme1.t:SimDataset" name="log"/>
+      <parameter idref="seroprevalence.scaling.Deme1:SimDataset" name="log"/>
+      <log idref="wastewaterLikelihood.Deme1.t:SimDataset" name="log"/>
+      <parameter idref="wastewater.scaling.Deme1:SimDataset" name="log"/>
+      <parameter idref="wastewater.sigma:SimDataset" name="log"/>
+      <log idref="Mascot.t:SimDataset"/>
+      <log id="nrEventslogger.t:SimDataset" spec="mascot.logger.MigrationCountLogger">
+        <mappedMascot id="mascotEventsTreelog.t:SimDataset" spec="mascot.distribution.MappedMascot" dynamics="@StructuredSkyline.t:SimDataset" structuredTreeIntervals="@StructuredTreeIntervals.t:SimDataset" tree="@Tree.t:SimDataset"/>
+      </log>
+      <log idref="StructuredSkyline.t:SimDataset"/>
+      <parameter idref="SkylinePrev.Deme1.t:SimDataset" name="log"/>
+      <parameter idref="NeScaler.Deme1.t:SimDataset" name="log"/>
+      <parameter idref="NeScaler.MEAN.t:SimDataset" name="log"/>
+    </logger>
+    <logger id="screenlog" spec="Logger" logEvery="1000">
+      <log idref="posterior"/>
+      <log idref="likelihood"/>
+      <log idref="prior"/>
+    </logger>
+    <logger id="treelog.t:SimDataset" spec="Logger" fileName="$(filebase)-$(tree).trees" logEvery="10000" mode="tree">
+      <log id="TreeWithMetaDataLogger.t:SimDataset" spec="beast.base.evolution.TreeWithMetaDataLogger" tree="@Tree.t:SimDataset"/>
+    </logger>
+    <logger id="typedTreelogger.t:SimDataset" spec="Logger" fileName="$(filebase).$(tree).trees" logEvery="10000" mode="tree">
+      <log id="structuredTreelog.t:SimDataset" spec="mascotdatastreams.logger.StructuredTreeLogger" mascotLogPflag="@Mascot.t:SimDataset"/>
+    </logger>
+    <logger id="typedEventsTreelogger.t:SimDataset" spec="Logger" fileName="$(filebase).$(tree).events.trees" logEvery="10000" mode="tree">
+      <log idref="mascotEventsTreelog.t:SimDataset"/>
+    </logger>
+    <logger id="NeDynamicsLogger.Deme1.t:SimDataset" spec="Logger" fileName="$(filebase).NeDynamics.Deme1.log" logEvery="1000">
+      <log idref="NeDynamics.Deme1.t:SimDataset"/>
+    </logger>
+    <logger id="cumulativeIncidenceLogger.Deme1.t:SimDataset" spec="Logger" fileName="$(filebase).cumulativeIncidence.Deme1.log" logEvery="1000">
+      <log spec="mascotdatastreams.logger.CumulativeIncidenceLogger">
+        <seroprevalenceLikelihood idref="seroprevalenceLikelihood.Deme1.t:SimDataset"/>
+      </log>
+    </logger>
+    <!-- <operatorschedule id="OperatorSchedule" spec="targetedbeast.operatorschedule.TargetedOperatorSchedule"/> -->
+  </run>
+</beast>
