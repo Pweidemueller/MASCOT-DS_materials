@@ -16,7 +16,7 @@ The scripts in this folder rely on the following software. Install each so that 
 | [trimAl](http://trimal.cgenomics.org/) | Alignment column trimming | Download a prebuilt binary, we used v1.5 |
 | [IQ-TREE](http://www.iqtree.org/) (v3) | Maximum-likelihood phylogeny inference | Download a release from https://github.com/iqtree/iqtree3/releases , this analysis used Release 3.0.1|
 | [TreeTime](https://github.com/neherlab/treetime) | Time-calibration of the ML tree, clock-outlier filtering | `pip install phylo-treetime` (recommended in its own virtual environment — its numpy/scipy requirements can conflict with `biopython_env`), we used v0.11.4 |
-| [BEAST2](https://www.beast2.org/) with [MASCOT](https://github.com/nicfel/Mascot) and [MASCOT-DS](https://github.com/Pweidemueller/Mascot_datastreams) | Phylodynamic inference | See BEAST2/MASCOT installation instructions |
+| [BEAST2](https://www.beast2.org/) with [MASCOT](https://github.com/CompEvol/Mascot) and [MASCOT-DS](https://github.com/Pweidemueller/Mascot_datastreams) | Phylodynamic inference | See BEAST2/MASCOT installation instructions |
 
 Create the Python environment with:
 
