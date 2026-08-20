@@ -1,20 +1,4 @@
 // Nextflow pipeline for structured SIR simulations: generate BEAST2 XMLs from contact matrices
-//
-// Improvements applied from IMPROVEMENT_PLAN.md section 1:
-//   1.1  parseVariant() helper replaces 5× duplicated regex
-//   1.2  Canonical empty files replace per-base/variant unique files
-//   1.3  Consolidated COMBINE_LOGS: one job per xmlname (loop over log types)
-//   1.4  Simplified base_inputs channel
-//   1.5  base_name/variant_type carried through channels from MAKE_MASCOT_XML
-//   1.6  storeDir removed; publishDir used for RUN_MASCOT; ANALYSE_FROM_PUBLISHED entrypoint added
-//   1.7  Clip variants removed (only noclip was active; _noclip suffix dropped)
-//   1.8  Hardcoded conda path replaced with params.conda_env
-//   1.9  ANALYSE_POSTERIORS uses val(meta) map pattern
-//
-// Improvements applied from IMPROVEMENT_PLAN.md section 2:
-//   2.   Integrated standalone scripts as Nextflow processes:
-//        MAKE_INDIVIDUAL_SIM_FIGURES, COMBINE_HPD_NE_BY_MODEL,
-//        QUANTIFY_INFORMATION_CONTENT, MAKE_FIGURE_TRUE_VS_ESTIMATE
 
 nextflow.enable.dsl=2
 
@@ -22,7 +6,6 @@ nextflow.enable.dsl=2
 // Helper functions
 // ---------------------------------------------------------------------------
 
-// [1.1] Parse base_name and variant_type from an XML/log basename.
 // Fallback for edge cases where metadata is not available through channels.
 def parseVariant(String name) {
     if (name.endsWith('_original')) {
@@ -35,7 +18,6 @@ def parseVariant(String name) {
     return [name, 'unknown']
 }
 
-// [1.2] Empty-file machinery eliminated for datastream files.
 // All variants receive the real datastream files; the variant_type argument
 // tells create_mascot_xml_fixedtree.py which datastreams to actually use.
 // For analysis, real files serve as ground truth regardless of MASCOT variant.
@@ -55,7 +37,7 @@ def emptyFile(String name) {
 // ---------------------------------------------------------------------------
 
 process SAMPLE_SIMPARAMS {
-    tag "${ndemes}demes_seed${seed}"                                             // [1.8]
+    tag "${ndemes}demes_seed${seed}"
     publishDir "${params.outdir}/0_sample_simparameters", mode: 'copy'
 
     input:
@@ -76,7 +58,7 @@ process SAMPLE_SIMPARAMS {
 }
 
 process MAKE_SIM_XML {
-    tag "${contact.baseName}"                                           // [1.8]
+    tag "${contact.baseName}"
     publishDir "${params.outdir}/1_remaster_sim", mode: 'copy'
 
     input:
@@ -131,7 +113,7 @@ process PLOT_TREES_GROUNDTRUTH {
 }
 
 process SIMULATE_DATASTREAMS {
-    tag "${traj.baseName}"                                               // [1.8]
+    tag "${traj.baseName}"
     publishDir "${params.outdir}/1_remaster_sim", mode: 'copy'
 
     input:
@@ -169,8 +151,6 @@ process CONCATENATE_SIM_METADATA {
     """
 }
 
-// [1.5] MAKE_MASCOT_XML now emits base_name and variant_type as val() outputs
-// [1.7] Clip dimension removed — always passes --clip-trans-rate false
 process MAKE_MASCOT_XML {
     tag "${nexus.baseName}_${variant_type}"
     publishDir "${params.outdir}/2_mascot/${nexus.baseName}/${variant_type}", mode: 'copy', pattern: '*.xml'
@@ -200,8 +180,6 @@ process MAKE_MASCOT_XML {
     """
 }
 
-// [1.5] RUN_MASCOT carries base_name and variant_type through all output emits
-// [1.6] publishDir enabled for MASCOT outputs
 process RUN_MASCOT {
     tag "${xmlfile.baseName} (seed=${seed})"
     publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy', pattern: "${seed}_${xmlfile.baseName}.*"
@@ -222,7 +200,6 @@ process RUN_MASCOT {
     """
 }
 
-// [1.3] Consolidated: one invocation per xmlname runs logcombiner for all log types in a loop
 process COMBINE_LOGS {
     tag "${xmlname}"
     publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy'
@@ -309,7 +286,6 @@ process PLOT_TREES_MASCOT {
     """
 }
 
-// [1.9] Uses val(meta) map pattern instead of unwieldy 15-element tuple
 process ANALYSE_POSTERIORS {
     tag "${meta.base}_${meta.variant}"
     publishDir "${params.outdir}/3_analysis/${meta.base}/${meta.variant}", mode: 'copy', pattern: '*.{pdf,csv}'
@@ -462,7 +438,6 @@ process PLOT_ESS_HEATMAP {
     """
 }
 
-// [2] Per-simulation publication figures (prevalence, Ne, cumIncidence per deme)
 // Same inputs as ANALYSE_POSTERIORS — reuses parse_arguments() from analyse_posteriors.py
 process MAKE_INDIVIDUAL_SIM_FIGURES {
     tag "${meta.base}_${meta.variant}"
@@ -494,7 +469,6 @@ process MAKE_INDIVIDUAL_SIM_FIGURES {
     """
 }
 
-// [2] Combine Ne HPD validation CSVs from original + datastreams into one CSV with Model column
 process COMBINE_HPD_NE_BY_MODEL {
     tag "Ne by model"
     publishDir "${params.outdir}/3_analysis", mode: 'copy'
@@ -514,7 +488,6 @@ process COMBINE_HPD_NE_BY_MODEL {
     """
 }
 
-// [2] Quantify information content by comparing HPD widths across leave-one-out variants
 // Uses a single flat path input to avoid combine() flattening separate collected lists.
 // Files are sorted into params/prevalence/migration_rates by filename prefix.
 process QUANTIFY_INFORMATION_CONTENT {
@@ -543,7 +516,6 @@ process QUANTIFY_INFORMATION_CONTENT {
     """
 }
 
-// [2] True vs estimated scatter plots, migration bias/uncertainty, prevalence/Ne coverage over time
 process MAKE_FIGURE_TRUE_VS_ESTIMATE {
     tag "true vs estimate"
     publishDir "${params.outdir}/5_simulation_study", mode: 'copy'
@@ -568,8 +540,6 @@ process MAKE_FIGURE_TRUE_VS_ESTIMATE {
     """
 }
 
-// [2] Composite value-of-information figures across MASCOT-DS variants
-// (main + supplementary gridspec panels; see make_composite_figures_voi.py).
 // All required CSVs (params/prevalence/migration_rates per datastream variant
 // + sim metadata) are staged flat into the work dir, so --analysis_dir is '.'.
 process MAKE_COMPOSITE_FIGURES_VOI {
@@ -599,7 +569,7 @@ process MAKE_COMPOSITE_FIGURES_VOI {
 // ---------------------------------------------------------------------------
 workflow {
     // Build tuples for sampling
-    tuples_to_sample = Channel.from(1..20).map { n ->
+    tuples_to_sample = Channel.from(1..10).map { n ->
         tuple(n, params.ndemes, params.population_sizes, 41 + n)
     }
 
@@ -610,8 +580,7 @@ workflow {
     ds_outputs = SIMULATE_DATASTREAMS(beast_outputs.remaster_outputs)
 
     // ── Create variants ─────────────────────────────────────────────────
-    // [1.7] Clip dimension removed: variant_type is used directly (no _noclip suffix)
-    // [1.2] All variants receive the real datastream files; variant_type controls
+    // All variants receive the real datastream files; variant_type controls
     //       which ones the script actually uses. No empty files needed.
     datastream_variants = ds_outputs.datastreams.flatMap { t ->
         def (simNb, nd, params_csv, tr, tj, nx, cc, sp, ww) = t
@@ -634,7 +603,6 @@ workflow {
     mascot = MAKE_MASCOT_XML(all_variants)
 
     // ── Seed expansion ──────────────────────────────────────────────────
-    // [1.5] base_name and variant_type carried from MAKE_MASCOT_XML — no re-parsing
     mascot_all_seeded = mascot.mascot_xmls.flatMap { t ->
         def (simNb, ndemes, trees, traj, nexus, xmlfile, base_name, variant_type) = t
         [410, 430, 450].collect { seed ->
@@ -645,8 +613,6 @@ workflow {
     mascot_runs = RUN_MASCOT(mascot_all_seeded)
 
     // ── Log combining ───────────────────────────────────────────────────
-    // [1.3] Consolidated: collect ALL log files per xmlname, run one COMBINE_LOGS job
-    // [1.1/1.5] No regex parsing — base_name/variant_type from channel metadata
     all_combinable_logs = mascot_runs.outputs
         .flatMap { base_name, variant_type, files ->
             def xmlname = base_name + "_" + variant_type
@@ -659,7 +625,6 @@ workflow {
     combined = COMBINE_LOGS(all_combinable_logs)
 
     // ── Tree combining ──────────────────────────────────────────────────
-    // [1.5] Metadata from channel, no filename re-parsing needed
     trees_grouped = mascot_runs.mascot_trees
         .map { base_name, variant_type, xmlname, file ->
             tuple(xmlname, file, base_name, variant_type)
@@ -672,7 +637,6 @@ workflow {
 }
 
 // ---------------------------------------------------------------------------
-// [1.6] Re-analysis workflow: reads from published results directory
 // Usage:
 //   nextflow run main.nf -entry ANALYSE_FROM_BEASTOUTPUTS \
 //       --outdir /path/to/published/results

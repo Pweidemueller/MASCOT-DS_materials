@@ -62,12 +62,6 @@
         <distribution id="regularizeTransmissionRate.Deme2.t:SimDataset" spec="mascotdatastreams.util.TransmissionSmallerThan">
           <spline idref="splinePrev.Deme2.t:SimDataset"/>
         </distribution>
-        <distribution id="regularizeLocalTransmissionRate.Deme1.t:SimDataset" spec="mascotdatastreams.util.LocalTransmissionSmallerThan">
-          <dynamics idref="NeDynamics.Deme1.t:SimDataset"/>
-        </distribution>
-        <distribution id="regularizeLocalTransmissionRate.Deme2.t:SimDataset" spec="mascotdatastreams.util.LocalTransmissionSmallerThan">
-          <dynamics idref="NeDynamics.Deme2.t:SimDataset"/>
-        </distribution>
         <distribution id="caseCountLikelihood.Deme1.t:SimDataset" spec="mascotdatastreams.distribution.CaseCountLikelihood">
           <prevalenceSpline idref="splinePrev.Deme1.t:SimDataset"/>
           <caseCounts idref="caseCounts.Deme1:SimDataset"/>

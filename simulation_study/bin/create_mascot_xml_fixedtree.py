@@ -458,13 +458,10 @@ def _add_local_transmission_priors(root):
     Add a LocalTransmissionSmallerThan prior per deme so MCMC rejects
     states where β^local ≤ 0 anywhere on the spline grid.
 
-<<<<<<< HEAD
     The new priors are inserted immediately after the existing
     regularizeTransmissionRate.* distributions in the <prior> compound, so the
     two families sit next to each other at the top of the prior block.
 
-=======
->>>>>>> transrate_def
     Idempotent: skips demes whose prior already exists in the tree.
     """
     ne_dynamics_list = root.find(".//*[@id='NeDynamicsList.t:SimDataset']")
