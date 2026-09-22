@@ -186,7 +186,7 @@ process MAKE_MASCOT_XML {
 
 process RUN_MASCOT {
     tag "${xmlfile.baseName} (seed=${seed})"
-    // publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy', pattern: "${seed}_${xmlfile.baseName}.*"
+    publishDir "${params.outdir}/2_mascot/${base_name}/${variant_type}", mode: 'copy', pattern: "${seed}_${xmlfile.baseName}.*"
 
     input:
     tuple val(simNb), val(ndemes), path(trees), path(traj), path(nexus), path(xmlfile), val(seed), val(base_name), val(variant_type)
@@ -587,7 +587,7 @@ workflow {
     if (!params.treeannotator_path) { error "params.treeannotator_path is not set — e.g. --treeannotator_path /path/to/beast/bin/treeannotator (see README.md)." }
 
     // Build tuples for sampling
-    tuples_to_sample = Channel.from(1..100).map { n ->
+    tuples_to_sample = Channel.from(1..10).map { n ->
         tuple(n, params.ndemes, params.population_sizes, 41 + n)
     }
 
